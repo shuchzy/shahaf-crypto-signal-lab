@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>כניסה · Shahaf Crypto Signal Lab</title>
+  <style>
+    :root { color-scheme: dark; --green:#61f2aa; --muted:#8eaaa0; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      color: #effbf5; font-family: "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at 20% 0%, rgba(42,178,126,.2), transparent 35rem),
+        #07100f;
+    }
+    form {
+      width: min(420px, calc(100% - 30px)); padding: 34px;
+      background: rgba(13,29,26,.94); border: 1px solid rgba(134,236,188,.16);
+      border-radius: 16px; box-shadow: 0 25px 80px rgba(0,0,0,.35);
+    }
+    .eyebrow { color:var(--green); font:700 .72rem Consolas,monospace; letter-spacing:.15em; }
+    h1 { margin: 10px 0 8px; font-size: 2rem; }
+    p { color:var(--muted); line-height:1.6; margin-bottom:25px; }
+    label { display:block; margin:15px 0 7px; color:#c7d9d1; font-size:.88rem; }
+    input {
+      width:100%; padding:13px; border-radius:9px; outline:none;
+      border:1px solid rgba(134,236,188,.18); color:#effbf5; background:#091815;
+      font:inherit;
+    }
+    input:focus { border-color:var(--green); }
+    button {
+      width:100%; margin-top:22px; padding:13px; border:0; border-radius:9px;
+      background:var(--green); color:#052018; font-weight:800; cursor:pointer;
+    }
+    #error { color:#ff8290; min-height:20px; margin:12px 0 0; font-size:.86rem; }
+  </style>
+</head>
+<body>
+  <form method="post" action="/login" autocomplete="on">
+    <div class="eyebrow">PRIVATE ACCESS</div>
+    <h1>Shahaf Crypto Signal Lab</h1>
+    <p>כניסה פרטית למערכת האיתותים ותיק עסקאות הדמו.</p>
+    <label for="username">שם משתמש</label>
+    <input id="username" name="username" autocomplete="username" required autofocus>
+    <label for="password">סיסמה</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">כניסה למערכת</button>
+    <div id="error"></div>
+  </form>
+  <script>
+    const error = new URLSearchParams(location.search).get("error");
+    document.querySelector("#error").textContent = error === "locked"
+      ? "יותר מדי ניסיונות. יש להמתין 15 דקות."
+      : error ? "שם המשתמש או הסיסמה אינם נכונים." : "";
+  </script>
+</body>
+</html>

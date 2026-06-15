@@ -99,8 +99,8 @@ class MarketScanner:
         risk_distance = max(atr_15m * 1.35, price * 0.0035)
         sign = 1 if direction == "LONG" else -1
         stop = price - sign * risk_distance
-        target_1 = price + sign * risk_distance * 1.5
-        target_2 = price + sign * risk_distance * 2.5
+        target_1 = price + sign * risk_distance * 3.0
+        target_2 = price + sign * risk_distance * 5.0
 
         reasons = [
             f"{agreement}/4 timeframes align {direction.lower()}",
@@ -134,7 +134,7 @@ class MarketScanner:
             "stop_loss": stop if actionable else None,
             "take_profit_1": target_1 if actionable else None,
             "take_profit_2": target_2 if actionable else None,
-            "risk_reward": 1.5 if actionable else None,
+            "risk_reward": 3.0 if actionable else None,
             "score": round(weighted_score, 3),
             "reasons": reasons,
             "timeframes": {
@@ -174,11 +174,19 @@ class MarketScanner:
             views = {}
             try:
                 market = market_info["market"]
+                timeframe_candles = {}
                 for timeframe in TIMEFRAMES:
                     candles = market.klines(market_info["symbol"], timeframe)
+                    timeframe_candles[timeframe] = candles
                     views[timeframe] = analyze_timeframe(timeframe, candles)
+                self.store.evaluate_demo_trades(
+                    market_info["exchange"],
+                    market_info["symbol"],
+                    timeframe_candles["15m"],
+                )
                 signal = self._build_signal(market_info, views)
-                self.store.add_signal(signal)
+                signal_id = self.store.add_signal(signal)
+                self.store.open_demo_trade(signal_id, signal, notional=10)
                 results.append(signal)
                 print(
                     f"[signal] {signal['exchange']} {signal['symbol']} {signal['direction']} "

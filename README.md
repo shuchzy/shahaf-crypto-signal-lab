@@ -48,6 +48,9 @@ python app.py --no-browser
 - מודל הסתברותי מקומי שמתעדכן מתוצאות איתותים לאחר 4 שעות
 - Live browser updates over Server-Sent Events with heartbeat and reconnect
 - Separate Binance and Bybit spot-market scans
+- Private signed-session login configured through deployment secrets
+- $10 demo trades with a minimum 1:3 risk-to-reward ratio
+- Dashboard metrics for trade count, win rate, realized profit, and return
 
 הנתונים נשמרים מקומית ב-`data/signals.db`. אין צורך במפתח API והמערכת אינה מבצעת עסקאות.
 

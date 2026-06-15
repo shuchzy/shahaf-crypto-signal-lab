@@ -65,6 +65,7 @@ function renderSignals() {
             <span>SL <strong>${fmtPrice(signal.stop_loss)}</strong></span>
             <span>TP1 <strong>${fmtPrice(signal.take_profit_1)}</strong></span>
             <span>TP2 <strong>${fmtPrice(signal.take_profit_2)}</strong></span>
+            <span>R:R <strong>${signal.risk_reward ? `1:${signal.risk_reward}` : "—"}</strong></span>
           </div>
           <span class="chevron">⌄</span>
         </div>
@@ -83,10 +84,13 @@ function applySnapshot(payload) {
   const { status, signals, stats } = payload;
   state.signals = signals || [];
   state.nextScanAt = new Date(status.next_scan_at);
-  $("#totalSignals").textContent = stats.total;
-  $("#actionableSignals").textContent = stats.actionable;
-  $("#resolvedSignals").textContent = stats.resolved;
-  $("#winRate").textContent = stats.win_rate == null ? "—" : `${stats.win_rate.toFixed(1)}%`;
+  const demo = stats.demo || {};
+  $("#totalTrades").textContent = demo.total_trades || 0;
+  $("#openTrades").textContent = demo.open_trades || 0;
+  $("#winRate").textContent = demo.win_rate == null ? "—" : `${demo.win_rate.toFixed(1)}%`;
+  $("#realizedPnl").textContent = `$${Number(demo.realized_pnl || 0).toFixed(2)}`;
+  $("#realizedPnl").className = Number(demo.realized_pnl || 0) >= 0 ? "positive" : "negative";
+  $("#returnPct").textContent = demo.return_pct == null ? "—" : `${demo.return_pct.toFixed(2)}%`;
   if (state.signals.length) {
     $("#lastUpdate").textContent = `עדכון חי אחרון: ${fmtTime(state.signals[0].created_at)}`;
   }

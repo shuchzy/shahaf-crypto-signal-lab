@@ -24,17 +24,21 @@
         </div>
         <button id="scanButton">סרוק עכשיו</button>
       </div>
+      <form method="post" action="/logout" class="logout-form">
+        <button type="submit" class="logout-button">יציאה</button>
+      </form>
     </header>
 
     <section class="warning">
-      כלי מחקר בלבד. אינו ייעוץ פיננסי ואינו מבצע עסקאות. איתות הוא הערכה הסתברותית, לא ודאות.
+      תיק דמו בלבד: כל עסקה בגודל $10, יחס סיכון־סיכוי מינימלי 1:3. אין ביצוע עסקאות אמיתיות ואין לראות במידע ייעוץ פיננסי.
     </section>
 
     <section class="metrics">
-      <article><span>איתותים שנאספו</span><strong id="totalSignals">0</strong></article>
-      <article><span>איתותים רלוונטיים</span><strong id="actionableSignals">0</strong></article>
-      <article><span>תוצאות שנמדדו</span><strong id="resolvedSignals">0</strong></article>
-      <article><span>אחוז הצלחה נמדד</span><strong id="winRate">—</strong></article>
+      <article><span>עסקאות דמו</span><strong id="totalTrades">0</strong></article>
+      <article><span>עסקאות פתוחות</span><strong id="openTrades">0</strong></article>
+      <article><span>אחוז הצלחה</span><strong id="winRate">—</strong></article>
+      <article><span>רווח ממומש</span><strong id="realizedPnl">$0.00</strong></article>
+      <article><span>תשואה ממומשת</span><strong id="returnPct">—</strong></article>
     </section>
 
     <section class="toolbar">

@@ -4,6 +4,7 @@ import json
 import sqlite3
 import threading
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -47,6 +48,38 @@ class SignalStore:
                 conn.execute(
                     "ALTER TABLE signals ADD COLUMN exchange TEXT NOT NULL DEFAULT 'Binance'"
                 )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS demo_trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    signal_id INTEGER NOT NULL UNIQUE,
+                    opened_at TEXT NOT NULL,
+                    closed_at TEXT,
+                    exchange TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    entry_price REAL NOT NULL,
+                    stop_loss REAL NOT NULL,
+                    take_profit REAL NOT NULL,
+                    notional REAL NOT NULL,
+                    quantity REAL NOT NULL,
+                    risk_amount REAL NOT NULL,
+                    risk_reward REAL NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'OPEN',
+                    exit_price REAL,
+                    pnl REAL,
+                    pnl_pct REAL,
+                    close_reason TEXT,
+                    FOREIGN KEY(signal_id) REFERENCES signals(id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_demo_open_symbol
+                ON demo_trades(exchange, symbol) WHERE status = 'OPEN'
+                """
+            )
 
     def _connect(self):
         return sqlite3.connect(self.path, timeout=15)
@@ -116,6 +149,132 @@ class SignalStore:
                 (status, outcome_return, signal_id),
             )
 
+    def open_demo_trade(self, signal_id: int, signal: dict, notional: float = 10.0) -> bool:
+        if signal["relevance"] != "ACTIONABLE" or signal.get("risk_reward", 0) < 3:
+            return False
+        entry = float(signal["price"])
+        stop = float(signal["stop_loss"])
+        target = float(signal["take_profit_1"])
+        quantity = notional / entry
+        risk_amount = abs(entry - stop) * quantity
+        try:
+            with self.lock, closing(self._connect()) as conn, conn:
+                conn.execute(
+                    """
+                    INSERT INTO demo_trades (
+                        signal_id, opened_at, exchange, symbol, direction,
+                        entry_price, stop_loss, take_profit, notional, quantity,
+                        risk_amount, risk_reward
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        signal_id,
+                        signal["created_at"],
+                        signal["exchange"],
+                        signal["symbol"],
+                        signal["direction"],
+                        entry,
+                        stop,
+                        target,
+                        notional,
+                        quantity,
+                        risk_amount,
+                        signal["risk_reward"],
+                    ),
+                )
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def evaluate_demo_trades(
+        self, exchange: str, symbol: str, candles: list[dict]
+    ) -> int:
+        with self.lock, closing(self._connect()) as conn, conn:
+            conn.row_factory = sqlite3.Row
+            trades = conn.execute(
+                """
+                SELECT * FROM demo_trades
+                WHERE exchange = ? AND symbol = ? AND status = 'OPEN'
+                """,
+                (exchange, symbol),
+            ).fetchall()
+            resolved = 0
+            for trade in trades:
+                opened_ms = int(
+                    datetime.fromisoformat(trade["opened_at"]).timestamp() * 1000
+                )
+                for candle in candles:
+                    if candle["open_time"] <= opened_ms:
+                        continue
+                    if trade["direction"] == "LONG":
+                        stop_hit = candle["low"] <= trade["stop_loss"]
+                        target_hit = candle["high"] >= trade["take_profit"]
+                    else:
+                        stop_hit = candle["high"] >= trade["stop_loss"]
+                        target_hit = candle["low"] <= trade["take_profit"]
+                    if not stop_hit and not target_hit:
+                        continue
+                    close_reason = "STOP_LOSS" if stop_hit else "TAKE_PROFIT"
+                    exit_price = (
+                        trade["stop_loss"] if stop_hit else trade["take_profit"]
+                    )
+                    sign = 1 if trade["direction"] == "LONG" else -1
+                    pnl = trade["quantity"] * (exit_price - trade["entry_price"]) * sign
+                    pnl_pct = pnl / trade["notional"] * 100
+                    closed_at = datetime.fromtimestamp(
+                        candle["close_time"] / 1000,
+                        tz=timezone.utc,
+                    ).isoformat()
+                    conn.execute(
+                        """
+                        UPDATE demo_trades
+                        SET status = 'CLOSED', closed_at = ?, exit_price = ?,
+                            pnl = ?, pnl_pct = ?, close_reason = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            closed_at,
+                            exit_price,
+                            pnl,
+                            pnl_pct,
+                            close_reason,
+                            trade["id"],
+                        ),
+                    )
+                    resolved += 1
+                    break
+            return resolved
+
+    def demo_stats(self) -> dict:
+        with self.lock, closing(self._connect()) as conn, conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS open_count,
+                    SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) AS closed,
+                    SUM(CASE WHEN close_reason = 'TAKE_PROFIT' THEN 1 ELSE 0 END) AS wins,
+                    SUM(CASE WHEN close_reason = 'STOP_LOSS' THEN 1 ELSE 0 END) AS losses,
+                    COALESCE(SUM(CASE WHEN status = 'CLOSED' THEN pnl ELSE 0 END), 0) AS pnl
+                FROM demo_trades
+                """
+            ).fetchone()
+        total, open_count, closed, wins, losses, pnl = [
+            value or 0 for value in row
+        ]
+        return {
+            "total_trades": total,
+            "open_trades": open_count,
+            "closed_trades": closed,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": wins / closed * 100 if closed else None,
+            "realized_pnl": round(pnl, 4),
+            "return_pct": round(pnl / (closed * 10) * 100, 3) if closed else None,
+            "trade_size": 10,
+            "minimum_risk_reward": 3,
+        }
+
     def stats(self) -> dict:
         with self.lock, closing(self._connect()) as conn, conn:
             total = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
@@ -136,4 +295,5 @@ class SignalStore:
             "losses": losses,
             "resolved": resolved,
             "win_rate": wins / resolved * 100 if resolved else None,
+            "demo": self.demo_stats(),
         }
