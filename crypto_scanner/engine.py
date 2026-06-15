@@ -20,6 +20,10 @@ class MarketScanner:
         self.top_symbols = top_symbols
         self.markets = (BinanceMarketData(), BybitMarketData())
         self.model = OnlineSignalModel(Path(store.path).parent / "model.json")
+        self.market_health = {
+            market.name: {"ok": False, "error": "Waiting for first scan"}
+            for market in self.markets
+        }
 
     def _resolve_old_signals(self, prices: dict[str, float]) -> None:
         now = datetime.now(timezone.utc)
@@ -145,11 +149,21 @@ class MarketScanner:
         for market in self.markets:
             try:
                 exchange_symbols = market.top_usdt_symbols(self.top_symbols)
+                self.market_health[market.name] = {
+                    "ok": True,
+                    "error": None,
+                    "symbols": len(exchange_symbols),
+                }
                 for item in exchange_symbols:
                     item["exchange"] = market.name
                     item["market"] = market
                 ranked.extend(exchange_symbols)
             except Exception as exc:
+                self.market_health[market.name] = {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "symbols": 0,
+                }
                 print(f"[market] {market.name} discovery failed: {exc}", flush=True)
         prices = {
             f"{item['exchange']}:{item['symbol']}": item["price"] for item in ranked

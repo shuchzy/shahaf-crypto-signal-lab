@@ -90,9 +90,13 @@ function applySnapshot(payload) {
   if (state.signals.length) {
     $("#lastUpdate").textContent = `עדכון חי אחרון: ${fmtTime(state.signals[0].created_at)}`;
   }
+  const connectedMarkets = Object.entries(status.markets || {})
+    .filter(([, health]) => health.ok)
+    .map(([name]) => name);
+  const marketLabel = connectedMarkets.length ? connectedMarkets.join(" + ") : "מקורות השוק";
   $("#statusText").textContent = status.last_error
     ? `שגיאת מקור נתונים: ${status.last_error}`
-    : status.scanning ? "LIVE · סורק Binance + Bybit..." : "LIVE · מחובר לענן";
+    : status.scanning ? `LIVE · סורק ${marketLabel}...` : `LIVE · ${marketLabel}`;
   $("#scanButton").disabled = status.scanning;
   renderSignals();
 }

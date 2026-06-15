@@ -51,6 +51,7 @@ class AppState:
                 "interval_seconds": self.interval_seconds,
                 "source": "Binance + Bybit public spot market data",
                 "connection": "live",
+                "markets": self.scanner.market_health,
             }
 
     def publish(self) -> None:
