@@ -29,6 +29,7 @@ class SignalStore:
                     take_profit_1 REAL,
                     take_profit_2 REAL,
                     risk_reward REAL,
+                    setup_quality INTEGER NOT NULL DEFAULT 0,
                     score REAL NOT NULL,
                     reasons_json TEXT NOT NULL,
                     timeframes_json TEXT NOT NULL,
@@ -47,6 +48,10 @@ class SignalStore:
             if "exchange" not in columns:
                 conn.execute(
                     "ALTER TABLE signals ADD COLUMN exchange TEXT NOT NULL DEFAULT 'Binance'"
+                )
+            if "setup_quality" not in columns:
+                conn.execute(
+                    "ALTER TABLE signals ADD COLUMN setup_quality INTEGER NOT NULL DEFAULT 0"
                 )
             conn.execute(
                 """
@@ -91,8 +96,8 @@ class SignalStore:
                 INSERT INTO signals (
                     created_at, exchange, symbol, direction, relevance, confidence, price,
                     stop_loss, take_profit_1, take_profit_2, risk_reward, score,
-                    reasons_json, timeframes_json, features_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    setup_quality, reasons_json, timeframes_json, features_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal["created_at"],
@@ -107,6 +112,7 @@ class SignalStore:
                     signal.get("take_profit_2"),
                     signal.get("risk_reward"),
                     signal["score"],
+                    signal.get("setup_quality", 0),
                     json.dumps(signal["reasons"]),
                     json.dumps(signal["timeframes"]),
                     json.dumps(signal["features"]),
@@ -185,6 +191,18 @@ class SignalStore:
             return True
         except sqlite3.IntegrityError:
             return False
+
+    def has_open_demo_trade(self, exchange: str, symbol: str) -> bool:
+        with self.lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM demo_trades
+                WHERE exchange = ? AND symbol = ? AND status = 'OPEN'
+                LIMIT 1
+                """,
+                (exchange, symbol),
+            ).fetchone()
+        return row is not None
 
     def evaluate_demo_trades(
         self, exchange: str, symbol: str, candles: list[dict]

@@ -120,10 +120,18 @@ class TimeframeView:
     fvg: dict | None
     order_block: dict | None
     wyckoff: str
+    structure_break: str | None
+    displacement: str | None
+    recent_high: float
+    recent_low: float
     reasons: list[str]
 
 
 def analyze_timeframe(timeframe: str, candles: list[dict]) -> TimeframeView:
+    if len(candles) < 60:
+        raise ValueError(f"{timeframe} requires at least 60 candles")
+    # Ignore the final exchange candle because it may still be forming.
+    candles = candles[:-1]
     closes = [candle["close"] for candle in candles]
     volumes = [candle["volume"] for candle in candles]
     current = candles[-1]
@@ -138,6 +146,8 @@ def analyze_timeframe(timeframe: str, candles: list[dict]) -> TimeframeView:
     recent_low = min(c["low"] for c in candles[-21:-1])
     prior_high = max(c["high"] for c in candles[-55:-21])
     prior_low = min(c["low"] for c in candles[-55:-21])
+    body = abs(current["close"] - current["open"])
+    candle_range = max(current["high"] - current["low"], 1e-12)
 
     if current["close"] > ema20 > ema50 > ema200:
         trend, trend_score = "strong_bullish", 2.0
@@ -163,6 +173,21 @@ def analyze_timeframe(timeframe: str, candles: list[dict]) -> TimeframeView:
         sweep, sweep_score = "sell_side_sweep", 1.4
     elif current["high"] > recent_high and current["close"] < recent_high:
         sweep, sweep_score = "buy_side_sweep", -1.4
+
+    structure_break = None
+    structure_break_score = 0.0
+    if current["close"] > recent_high:
+        structure_break, structure_break_score = "bullish_bos", 1.1
+    elif current["close"] < recent_low:
+        structure_break, structure_break_score = "bearish_bos", -1.1
+
+    displacement = None
+    displacement_score = 0.0
+    if current_atr > 0 and body >= current_atr * 0.8 and body / candle_range >= 0.6:
+        if current["close"] > current["open"]:
+            displacement, displacement_score = "bullish", 0.7
+        else:
+            displacement, displacement_score = "bearish", -0.7
 
     current_fvg = recent_fvg(candles)
     fvg_score = 0.0
@@ -193,6 +218,7 @@ def analyze_timeframe(timeframe: str, candles: list[dict]) -> TimeframeView:
 
     momentum_score = clamp((current_rsi - 50) / 18, -1.0, 1.0)
     bias = trend_score + structure_score + sweep_score + fvg_score + block_score
+    bias += structure_break_score + displacement_score
     bias += wyckoff_score + momentum_score
     reasons = [
         f"Trend {trend}",
@@ -207,6 +233,10 @@ def analyze_timeframe(timeframe: str, candles: list[dict]) -> TimeframeView:
         reasons.append(f"{current_fvg['direction']} FVG")
     if block:
         reasons.append(f"{block['direction']} order block")
+    if structure_break:
+        reasons.append(structure_break.replace("_", " "))
+    if displacement:
+        reasons.append(f"{displacement} displacement")
     return TimeframeView(
         timeframe=timeframe,
         bias=bias,
@@ -220,6 +250,10 @@ def analyze_timeframe(timeframe: str, candles: list[dict]) -> TimeframeView:
         fvg=current_fvg,
         order_block=block,
         wyckoff=wyckoff,
+        structure_break=structure_break,
+        displacement=displacement,
+        recent_high=recent_high,
+        recent_low=recent_low,
         reasons=reasons,
     )
 

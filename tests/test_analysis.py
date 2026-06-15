@@ -41,6 +41,29 @@ class AnalysisTests(unittest.TestCase):
         self.assertGreater(view.bias, 0)
         self.assertIn("bullish", view.trend)
 
+    def test_ignores_unclosed_final_candle(self):
+        candles = []
+        for index in range(240):
+            price = 100 + index * 0.1
+            candles.append(
+                candle(index, price - 0.05, price + 0.15, price - 0.15, price, 100)
+            )
+        candles[-1] = candle(239, 124, 160, 80, 90, 10000)
+        view = analyze_timeframe("15m", candles)
+        self.assertGreater(view.bias, 0)
+        self.assertNotEqual(view.displacement, "bearish")
+
+    def test_detects_closed_bullish_break_and_displacement(self):
+        candles = []
+        for index in range(238):
+            price = 100 + index * 0.01
+            candles.append(candle(index, price, price + 0.2, price - 0.2, price + 0.05))
+        candles.append(candle(238, 102.3, 105.5, 102.2, 105.2, 500))
+        candles.append(candle(239, 105.2, 105.4, 105.0, 105.1))
+        view = analyze_timeframe("15m", candles)
+        self.assertEqual(view.structure_break, "bullish_bos")
+        self.assertEqual(view.displacement, "bullish")
+
 
 if __name__ == "__main__":
     unittest.main()

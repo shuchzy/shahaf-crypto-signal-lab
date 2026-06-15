@@ -20,6 +20,7 @@ class StorageTests(unittest.TestCase):
             "take_profit_1": 103,
             "take_profit_2": 105,
             "risk_reward": risk_reward,
+            "setup_quality": 6,
             "score": 10,
             "reasons": [],
             "timeframes": {},
@@ -46,6 +47,7 @@ class StorageTests(unittest.TestCase):
             )
             signal = store.latest_signals(limit=1)[0]
             self.assertEqual(signal["exchange"], "Bybit")
+            self.assertEqual(signal["setup_quality"], 0)
 
     def test_demo_trade_closes_at_three_risk_units(self):
         with tempfile.TemporaryDirectory() as directory:

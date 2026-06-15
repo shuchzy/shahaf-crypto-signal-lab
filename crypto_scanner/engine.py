@@ -58,6 +58,8 @@ class MarketScanner:
             "volume_z": round(view.volume_z, 2),
             "wyckoff": view.wyckoff,
             "liquidity_sweep": view.liquidity_sweep,
+            "structure_break": view.structure_break,
+            "displacement": view.displacement,
             "fvg": view.fvg,
             "order_block": view.order_block,
         }
@@ -72,46 +74,111 @@ class MarketScanner:
         direction = "LONG" if weighted_score >= 0 else "SHORT"
         features = build_features(views, market_info["change_24h"])
         model_probability = self.model.probability(features, direction)
+        model_weight = min(0.25, self.model.samples / 400 * 0.25)
         agreement = sum(
             1
             for view in views.values()
             if (view.bias > 0 and direction == "LONG")
             or (view.bias < 0 and direction == "SHORT")
         )
-        technical_confidence = 50 + abs(normalized) * 42
+        technical_confidence = 50 + abs(normalized) * 44
         confidence = clamp(
-            technical_confidence * 0.75 + model_probability * 100 * 0.25,
+            technical_confidence * (1 - model_weight)
+            + model_probability * 100 * model_weight,
             0,
-            99,
+            96,
         )
         atr_15m = views["15m"].atr
         price = market_info["price"]
         too_extended = abs(market_info["change_24h"]) > 18
         low_volatility = views["15m"].atr_pct < 0.12
+        high_volatility = views["15m"].atr_pct > 4.5
+        sign = 1 if direction == "LONG" else -1
+        aligned = lambda value: value == ("bullish" if sign > 0 else "bearish")
+        aligned_break = views["15m"].structure_break == (
+            "bullish_bos" if sign > 0 else "bearish_bos"
+        )
+        aligned_sweep = views["15m"].liquidity_sweep == (
+            "sell_side_sweep" if sign > 0 else "buy_side_sweep"
+        )
+        aligned_fvg = bool(views["15m"].fvg and aligned(views["15m"].fvg["direction"]))
+        aligned_block = bool(
+            views["15m"].order_block
+            and aligned(views["15m"].order_block["direction"])
+        )
+        aligned_displacement = aligned(views["15m"].displacement)
+        entry_trigger = (
+            aligned_sweep
+            or aligned_break
+            or (aligned_displacement and (aligned_fvg or aligned_block))
+        )
+        htf_aligned = all(
+            (views[timeframe].bias > 0 and sign > 0)
+            or (views[timeframe].bias < 0 and sign < 0)
+            for timeframe in ("1h", "4h")
+        )
+        daily_veto = (
+            views["1d"].bias < -2.0 if sign > 0 else views["1d"].bias > 2.0
+        )
+        open_position = self.store.has_open_demo_trade(
+            market_info["exchange"], market_info["symbol"]
+        )
+        confluence_count = sum(
+            (
+                htf_aligned,
+                entry_trigger,
+                aligned_sweep,
+                aligned_break,
+                aligned_fvg,
+                aligned_block,
+                aligned_displacement,
+                views["15m"].volume_z >= 0,
+            )
+        )
         actionable = (
-            confidence >= 67
+            confidence >= 72
             and agreement >= 3
-            and abs(weighted_score) >= 7.0
+            and abs(weighted_score) >= 8.5
+            and htf_aligned
+            and entry_trigger
+            and confluence_count >= 4
+            and not daily_veto
             and not too_extended
             and not low_volatility
+            and not high_volatility
+            and not open_position
         )
         relevance = "ACTIONABLE" if actionable else "NOT_RELEVANT"
-        risk_distance = max(atr_15m * 1.35, price * 0.0035)
-        sign = 1 if direction == "LONG" else -1
-        stop = price - sign * risk_distance
+        atr_stop = price - sign * max(atr_15m * 1.25, price * 0.0035)
+        structure_stop = (
+            views["15m"].recent_low - atr_15m * 0.15
+            if sign > 0
+            else views["15m"].recent_high + atr_15m * 0.15
+        )
+        stop = min(atr_stop, structure_stop) if sign > 0 else max(atr_stop, structure_stop)
+        risk_distance = abs(price - stop)
         target_1 = price + sign * risk_distance * 3.0
         target_2 = price + sign * risk_distance * 5.0
 
         reasons = [
             f"{agreement}/4 timeframes align {direction.lower()}",
+            f"Setup confluence {confluence_count}/8",
+            f"1h/4h context {'aligned' if htf_aligned else 'conflicted'}",
+            f"15m entry trigger {'confirmed' if entry_trigger else 'missing'}",
             f"Technical score {weighted_score:.2f}",
-            f"Model probability {model_probability * 100:.1f}%",
+            f"Learning model {model_probability * 100:.1f}% over {self.model.samples} samples",
             f"24h change {market_info['change_24h']:.2f}%",
         ]
         if too_extended:
             reasons.append("Move is extended; chasing risk is high")
         if low_volatility:
             reasons.append("15m volatility is too low")
+        if high_volatility:
+            reasons.append("15m volatility is too high for controlled risk")
+        if daily_veto:
+            reasons.append("Daily context strongly opposes the setup")
+        if open_position:
+            reasons.append("A demo position is already open for this market")
         if not actionable:
             reasons.append("No sufficiently strong setup right now")
         for timeframe in TIMEFRAMES:
@@ -135,6 +202,7 @@ class MarketScanner:
             "take_profit_1": target_1 if actionable else None,
             "take_profit_2": target_2 if actionable else None,
             "risk_reward": 3.0 if actionable else None,
+            "setup_quality": confluence_count,
             "score": round(weighted_score, 3),
             "reasons": reasons,
             "timeframes": {
