@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+
+# Local runtime data and learned model
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Local workspace artifacts
+work/
+outputs/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

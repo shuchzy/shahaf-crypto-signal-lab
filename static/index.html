@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shahaf Crypto Signal Lab</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="background-grid"></div>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">LOCAL MARKET INTELLIGENCE</p>
+        <h1>Shahaf Crypto Signal Lab</h1>
+        <p class="subtitle">סריקת שוק רב־טיימפריימית: ICT, Wyckoff, Order Blocks, FVG ומודל למידה מקומי</p>
+      </div>
+      <div class="status-panel">
+        <span id="statusDot" class="status-dot"></span>
+        <div>
+          <strong id="statusText">מתחבר...</strong>
+          <small id="countdown">טוען שעון סריקה</small>
+        </div>
+        <button id="scanButton">סרוק עכשיו</button>
+      </div>
+    </header>
+
+    <section class="warning">
+      כלי מחקר בלבד. אינו ייעוץ פיננסי ואינו מבצע עסקאות. איתות הוא הערכה הסתברותית, לא ודאות.
+    </section>
+
+    <section class="metrics">
+      <article><span>איתותים שנאספו</span><strong id="totalSignals">0</strong></article>
+      <article><span>איתותים רלוונטיים</span><strong id="actionableSignals">0</strong></article>
+      <article><span>תוצאות שנמדדו</span><strong id="resolvedSignals">0</strong></article>
+      <article><span>אחוז הצלחה נמדד</span><strong id="winRate">—</strong></article>
+    </section>
+
+    <section class="toolbar">
+      <div class="filters">
+        <button class="filter active" data-filter="all">הכול</button>
+        <button class="filter" data-filter="ACTIONABLE">רלוונטי</button>
+        <button class="filter" data-filter="NOT_RELEVANT">לא רלוונטי כרגע</button>
+      </div>
+      <input id="symbolSearch" type="search" placeholder="חיפוש מטבע, למשל BTC">
+    </section>
+
+    <section>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">SIGNAL STREAM</p>
+          <h2>לוג איתותים חי</h2>
+        </div>
+        <span id="lastUpdate">טרם התקבל עדכון</span>
+      </div>
+      <div id="signalList" class="signal-list">
+        <div class="empty">הסריקה הראשונה מתחילה כעת...</div>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
