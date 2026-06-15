@@ -133,6 +133,16 @@ input:focus { border-color: var(--green); }
 }
 .symbol { direction: ltr; text-align: right; font: 700 1.22rem Consolas, monospace; }
 .symbol small { display: block; color: var(--muted); font: 400 .74rem "Segoe UI", sans-serif; margin-top: 5px; }
+.exchange {
+  display: inline-block;
+  direction: ltr;
+  margin-left: 7px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font: 700 .62rem Consolas, monospace;
+}
+.exchange.binance { color: #f5cf48; background: rgba(245, 207, 72, .11); }
+.exchange.bybit { color: #ffb34e; background: rgba(255, 179, 78, .11); }
 .direction { display: flex; align-items: center; gap: 10px; }
 .badge { display: inline-flex; border-radius: 6px; padding: 5px 8px; font: 700 .74rem Consolas, monospace; }
 .badge.long { background: rgba(97,242,170,.13); color: var(--green); }

@@ -1,6 +1,7 @@
 # Shahaf Crypto Signal Lab
 
-מערכת מקומית מבוססת דפדפן לסריקת זוגות הקריפטו בעלי נפח המסחר הגבוה ביותר מול USDT.
+מערכת ענן ודפדפן לסריקת זוגות הקריפטו בעלי נפח המסחר הגבוה ביותר מול USDT
+ב-Binance וב-Bybit.
 
 Local browser-based cryptocurrency market scanner using transparent multi-timeframe
 technical heuristics and a small online learning model.
@@ -42,13 +43,15 @@ python app.py --no-browser
 - RSI, ATR, נפח וחריגות נפח
 - הסכמה בין 15m, 1h, 4h ו-1d
 - מודל הסתברותי מקומי שמתעדכן מתוצאות איתותים לאחר 4 שעות
+- Live browser updates over Server-Sent Events with heartbeat and reconnect
+- Separate Binance and Bybit spot-market scans
 
 הנתונים נשמרים מקומית ב-`data/signals.db`. אין צורך במפתח API והמערכת אינה מבצעת עסקאות.
 
 ## Requirements
 
 - Python 3.11 or newer
-- Internet access for public Binance market data
+- Internet access for public Binance and Bybit market data
 - No API key is required
 
 ## מגבלות חשובות

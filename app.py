@@ -34,6 +34,8 @@ class AppState:
         self.last_finished_at: str | None = None
         self.last_error: str | None = None
         self.next_scan_at = time.time()
+        self.event_version = 0
+        self.event_condition = threading.Condition()
 
     def status(self) -> dict:
         with self.lock:
@@ -47,8 +49,22 @@ class AppState:
                     self.next_scan_at, tz=timezone.utc
                 ).isoformat(),
                 "interval_seconds": self.interval_seconds,
-                "source": "Binance public spot market data",
+                "source": "Binance + Bybit public spot market data",
+                "connection": "live",
             }
+
+    def publish(self) -> None:
+        with self.event_condition:
+            self.event_version += 1
+            self.event_condition.notify_all()
+
+    def live_payload(self) -> dict:
+        return {
+            "status": self.status(),
+            "signals": self.store.latest_signals(limit=250),
+            "stats": self.store.stats(),
+            "version": self.event_version,
+        }
 
     def scan_once(self) -> None:
         if not self.scan_lock.acquire(blocking=False):
@@ -57,12 +73,15 @@ class AppState:
             with self.lock:
                 self.last_started_at = datetime.now(timezone.utc).isoformat()
                 self.last_error = None
+            self.publish()
             self.scanner.run_scan()
             with self.lock:
                 self.last_finished_at = datetime.now(timezone.utc).isoformat()
+            self.publish()
         except Exception as exc:
             with self.lock:
                 self.last_error = f"{type(exc).__name__}: {exc}"
+            self.publish()
             print(f"[scanner] {self.last_error}", flush=True)
         finally:
             self.scan_lock.release()
@@ -96,6 +115,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/live":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            version = -1
+            try:
+                while self.state.running:
+                    if version != self.state.event_version:
+                        payload = json.dumps(
+                            self.state.live_payload(), ensure_ascii=False
+                        )
+                        self.wfile.write(f"event: snapshot\ndata: {payload}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                        version = self.state.event_version
+                    else:
+                        self.wfile.write(b": heartbeat\n\n")
+                        self.wfile.flush()
+                    with self.state.event_condition:
+                        self.state.event_condition.wait(timeout=10)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         if path == "/api/status":
             self.send_json(self.state.status())
             return

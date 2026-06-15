@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .analysis import TimeframeView, analyze_timeframe, build_features, clamp
-from .market import BinanceMarketData
+from .market import BinanceMarketData, BybitMarketData
 from .model import OnlineSignalModel
 from .storage import SignalStore
 
@@ -18,7 +18,7 @@ class MarketScanner:
     def __init__(self, store: SignalStore, top_symbols: int = 15) -> None:
         self.store = store
         self.top_symbols = top_symbols
-        self.market = BinanceMarketData()
+        self.markets = (BinanceMarketData(), BybitMarketData())
         self.model = OnlineSignalModel(Path(store.path).parent / "model.json")
 
     def _resolve_old_signals(self, prices: dict[str, float]) -> None:
@@ -27,7 +27,7 @@ class MarketScanner:
             created = datetime.fromisoformat(signal["created_at"])
             if now - created < timedelta(hours=4):
                 continue
-            current = prices.get(signal["symbol"])
+            current = prices.get(f"{signal['exchange']}:{signal['symbol']}")
             if not current:
                 continue
             direction_sign = 1 if signal["direction"] == "LONG" else -1
@@ -121,6 +121,7 @@ class MarketScanner:
 
         return {
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "exchange": market_info["exchange"],
             "symbol": market_info["symbol"],
             "direction": direction,
             "relevance": relevance,
@@ -140,21 +141,33 @@ class MarketScanner:
         }
 
     def run_scan(self) -> list[dict]:
-        ranked = self.market.top_usdt_symbols(self.top_symbols)
-        prices = {item["symbol"]: item["price"] for item in ranked}
+        ranked = []
+        for market in self.markets:
+            try:
+                exchange_symbols = market.top_usdt_symbols(self.top_symbols)
+                for item in exchange_symbols:
+                    item["exchange"] = market.name
+                    item["market"] = market
+                ranked.extend(exchange_symbols)
+            except Exception as exc:
+                print(f"[market] {market.name} discovery failed: {exc}", flush=True)
+        prices = {
+            f"{item['exchange']}:{item['symbol']}": item["price"] for item in ranked
+        }
         self._resolve_old_signals(prices)
         results = []
         for market_info in ranked:
             views = {}
             try:
+                market = market_info["market"]
                 for timeframe in TIMEFRAMES:
-                    candles = self.market.klines(market_info["symbol"], timeframe)
+                    candles = market.klines(market_info["symbol"], timeframe)
                     views[timeframe] = analyze_timeframe(timeframe, candles)
                 signal = self._build_signal(market_info, views)
                 self.store.add_signal(signal)
                 results.append(signal)
                 print(
-                    f"[signal] {signal['symbol']} {signal['direction']} "
+                    f"[signal] {signal['exchange']} {signal['symbol']} {signal['direction']} "
                     f"{signal['confidence']:.1f}% {signal['relevance']}",
                     flush=True,
                 )

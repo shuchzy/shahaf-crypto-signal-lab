@@ -1,4 +1,12 @@
-const state = { signals: [], filter: "all", query: "", nextScanAt: null };
+const state = {
+  signals: [],
+  filter: "all",
+  query: "",
+  nextScanAt: null,
+  live: false,
+  reconnectTimer: null,
+  eventSource: null,
+};
 
 const $ = (selector) => document.querySelector(selector);
 const fmtPrice = (value) => {
@@ -16,8 +24,8 @@ const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
 function renderSignals() {
   const visible = state.signals.filter((signal) => {
     const filterMatch = state.filter === "all" || signal.relevance === state.filter;
-    const queryMatch = signal.symbol.toLowerCase().includes(state.query.toLowerCase());
-    return filterMatch && queryMatch;
+    const searchValue = `${signal.symbol} ${signal.exchange || ""}`.toLowerCase();
+    return filterMatch && searchValue.includes(state.query.toLowerCase());
   });
   if (!visible.length) {
     $("#signalList").innerHTML = '<div class="empty">אין איתותים התואמים לסינון.</div>';
@@ -25,6 +33,7 @@ function renderSignals() {
   }
   $("#signalList").innerHTML = visible.map((signal) => {
     const actionable = signal.relevance === "ACTIONABLE";
+    const exchange = signal.exchange || "Binance";
     const tfCards = Object.entries(signal.timeframes).map(([tf, view]) => `
       <div class="tf-card">
         <strong>${tf}</strong>
@@ -37,7 +46,10 @@ function renderSignals() {
       <article class="signal ${signal.direction.toLowerCase()} ${actionable ? "actionable" : ""}">
         <div class="signal-main">
           <div class="symbol">${escapeHtml(signal.symbol)}
-            <small>${fmtTime(signal.created_at)} · ${escapeHtml(signal.status)}</small>
+            <small>
+              <span class="exchange ${exchange.toLowerCase()}">${escapeHtml(exchange)}</span>
+              ${fmtTime(signal.created_at)} · ${escapeHtml(signal.status)}
+            </small>
           </div>
           <div>
             <div class="direction">
@@ -67,34 +79,59 @@ function renderSignals() {
   });
 }
 
-async function loadSignals() {
-  const response = await fetch("/api/signals", { cache: "no-store" });
-  if (!response.ok) throw new Error("signal request failed");
-  const payload = await response.json();
-  state.signals = payload.signals;
-  if (state.signals.length) $("#lastUpdate").textContent = `עדכון אחרון: ${fmtTime(state.signals[0].created_at)}`;
-  renderSignals();
-}
-
-async function loadStats() {
-  const response = await fetch("/api/stats", { cache: "no-store" });
-  const stats = await response.json();
+function applySnapshot(payload) {
+  const { status, signals, stats } = payload;
+  state.signals = signals || [];
+  state.nextScanAt = new Date(status.next_scan_at);
   $("#totalSignals").textContent = stats.total;
   $("#actionableSignals").textContent = stats.actionable;
   $("#resolvedSignals").textContent = stats.resolved;
   $("#winRate").textContent = stats.win_rate == null ? "—" : `${stats.win_rate.toFixed(1)}%`;
+  if (state.signals.length) {
+    $("#lastUpdate").textContent = `עדכון חי אחרון: ${fmtTime(state.signals[0].created_at)}`;
+  }
+  $("#statusText").textContent = status.last_error
+    ? `שגיאת מקור נתונים: ${status.last_error}`
+    : status.scanning ? "LIVE · סורק Binance + Bybit..." : "LIVE · מחובר לענן";
+  $("#scanButton").disabled = status.scanning;
+  renderSignals();
 }
 
-async function loadStatus() {
-  const response = await fetch("/api/status", { cache: "no-store" });
-  const status = await response.json();
-  state.nextScanAt = new Date(status.next_scan_at);
-  const dot = $("#statusDot");
-  dot.className = `status-dot ${status.last_error ? "error" : "live"}`;
-  $("#statusText").textContent = status.last_error
-    ? `שגיאה: ${status.last_error}`
-    : status.scanning ? "סורק את השוק..." : "המערכת פעילה";
-  $("#scanButton").disabled = status.scanning;
+async function initialLoad() {
+  const [statusResponse, signalsResponse, statsResponse] = await Promise.all([
+    fetch("/api/status", { cache: "no-store" }),
+    fetch("/api/signals", { cache: "no-store" }),
+    fetch("/api/stats", { cache: "no-store" }),
+  ]);
+  applySnapshot({
+    status: await statusResponse.json(),
+    signals: (await signalsResponse.json()).signals,
+    stats: await statsResponse.json(),
+  });
+}
+
+function setConnection(connected) {
+  state.live = connected;
+  $("#statusDot").className = `status-dot ${connected ? "live" : "error"}`;
+  $("#connectionMode").textContent = connected ? "LIVE STREAM" : "מתחבר מחדש...";
+  if (!connected) $("#statusText").textContent = "מתחבר מחדש לשירות הענן...";
+}
+
+function connectLiveStream() {
+  if (state.eventSource) state.eventSource.close();
+  const source = new EventSource("/api/live");
+  state.eventSource = source;
+  source.addEventListener("open", () => setConnection(true));
+  source.addEventListener("snapshot", (event) => {
+    setConnection(true);
+    applySnapshot(JSON.parse(event.data));
+  });
+  source.addEventListener("error", () => {
+    setConnection(false);
+    source.close();
+    clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = setTimeout(connectLiveStream, 3000);
+  });
 }
 
 function updateCountdown() {
@@ -103,15 +140,6 @@ function updateCountdown() {
   const minutes = Math.floor(seconds / 60).toString().padStart(2, "0");
   const rest = (seconds % 60).toString().padStart(2, "0");
   $("#countdown").textContent = `סריקה הבאה בעוד ${minutes}:${rest}`;
-}
-
-async function refresh() {
-  try {
-    await Promise.all([loadStatus(), loadSignals(), loadStats()]);
-  } catch (error) {
-    $("#statusDot").className = "status-dot error";
-    $("#statusText").textContent = "החיבור לשרת המקומי נותק";
-  }
 }
 
 document.querySelectorAll(".filter").forEach((button) => {
@@ -129,9 +157,8 @@ $("#symbolSearch").addEventListener("input", (event) => {
 $("#scanButton").addEventListener("click", async () => {
   $("#scanButton").disabled = true;
   await fetch("/api/scan", { method: "POST" });
-  setTimeout(refresh, 1000);
 });
 
-refresh();
-setInterval(refresh, 10000);
+initialLoad().catch(() => setConnection(false));
+connectLiveStream();
 setInterval(updateCountdown, 1000);

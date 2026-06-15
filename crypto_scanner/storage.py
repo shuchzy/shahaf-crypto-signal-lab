@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from contextlib import closing
 from pathlib import Path
 
 
@@ -11,12 +12,13 @@ class SignalStore:
         path.parent.mkdir(exist_ok=True)
         self.path = path
         self.lock = threading.Lock()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS signals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TEXT NOT NULL,
+                    exchange TEXT NOT NULL DEFAULT 'Binance',
                     symbol TEXT NOT NULL,
                     direction TEXT NOT NULL,
                     relevance TEXT NOT NULL,
@@ -38,22 +40,30 @@ class SignalStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at DESC)"
             )
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(signals)").fetchall()
+            }
+            if "exchange" not in columns:
+                conn.execute(
+                    "ALTER TABLE signals ADD COLUMN exchange TEXT NOT NULL DEFAULT 'Binance'"
+                )
 
     def _connect(self):
         return sqlite3.connect(self.path, timeout=15)
 
     def add_signal(self, signal: dict) -> int:
-        with self.lock, self._connect() as conn:
+        with self.lock, closing(self._connect()) as conn, conn:
             cursor = conn.execute(
                 """
                 INSERT INTO signals (
-                    created_at, symbol, direction, relevance, confidence, price,
+                    created_at, exchange, symbol, direction, relevance, confidence, price,
                     stop_loss, take_profit_1, take_profit_2, risk_reward, score,
                     reasons_json, timeframes_json, features_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal["created_at"],
+                    signal["exchange"],
                     signal["symbol"],
                     signal["direction"],
                     signal["relevance"],
@@ -72,7 +82,7 @@ class SignalStore:
             return int(cursor.lastrowid)
 
     def latest_signals(self, limit: int = 200) -> list[dict]:
-        with self.lock, self._connect() as conn:
+        with self.lock, closing(self._connect()) as conn, conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM signals ORDER BY id DESC LIMIT ?", (limit,)
@@ -87,7 +97,7 @@ class SignalStore:
         return output
 
     def pending_for_evaluation(self, max_rows: int = 500) -> list[dict]:
-        with self.lock, self._connect() as conn:
+        with self.lock, closing(self._connect()) as conn, conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -100,14 +110,14 @@ class SignalStore:
         return [dict(row) for row in rows]
 
     def resolve(self, signal_id: int, status: str, outcome_return: float) -> None:
-        with self.lock, self._connect() as conn:
+        with self.lock, closing(self._connect()) as conn, conn:
             conn.execute(
                 "UPDATE signals SET status = ?, outcome_return = ? WHERE id = ?",
                 (status, outcome_return, signal_id),
             )
 
     def stats(self) -> dict:
-        with self.lock, self._connect() as conn:
+        with self.lock, closing(self._connect()) as conn, conn:
             total = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
             actionable = conn.execute(
                 "SELECT COUNT(*) FROM signals WHERE relevance = 'ACTIONABLE'"
