@@ -1,6 +1,12 @@
 import unittest
 
-from crypto_scanner.analysis import analyze_timeframe, recent_fvg, rsi
+from crypto_scanner.analysis import (
+    analyze_timeframe,
+    fvg_retest,
+    recent_fvg,
+    recent_ict_events,
+    rsi,
+)
 
 
 def candle(index, open_price, high, low, close, volume=100):
@@ -63,6 +69,32 @@ class AnalysisTests(unittest.TestCase):
         view = analyze_timeframe("15m", candles)
         self.assertEqual(view.structure_break, "bullish_bos")
         self.assertEqual(view.displacement, "bullish")
+
+    def test_detects_fvg_retest_on_closed_entry_candle(self):
+        candles = [
+            candle(1, 10, 11, 9.5, 10.5),
+            candle(2, 10.5, 14.5, 10.4, 14),
+            candle(3, 15, 16, 14, 15.5),
+        ]
+        for index in range(4, 12):
+            candles.append(candle(index, 15.5, 16, 15, 15.6))
+        candles.append(candle(12, 15, 15.4, 13.8, 14.6))
+        candles.append(candle(13, 14.6, 14.8, 14.4, 14.7))
+        retest = fvg_retest(candles, "LONG")
+        self.assertIsNotNone(retest)
+        self.assertEqual(retest["low"], 11)
+        self.assertEqual(retest["high"], 14)
+
+    def test_detects_recent_sweep_and_bos_sequence(self):
+        candles = []
+        for index in range(30):
+            candles.append(candle(index, 100, 102, 98, 100))
+        candles.append(candle(30, 100, 101, 96, 99))
+        candles.append(candle(31, 99, 103, 98.5, 102.5))
+        candles.append(candle(32, 102.5, 103, 102, 102.8))
+        events = recent_ict_events(candles, event_window=8)
+        self.assertTrue(events["bullish_sweep"])
+        self.assertTrue(events["bullish_bos"])
 
 
 if __name__ == "__main__":

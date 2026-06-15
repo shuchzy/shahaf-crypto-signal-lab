@@ -4,13 +4,21 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .analysis import TimeframeView, analyze_timeframe, build_features, clamp
+from .analysis import (
+    TimeframeView,
+    analyze_timeframe,
+    build_features,
+    clamp,
+    fvg_retest,
+    recent_ict_events,
+)
 from .market import BinanceMarketData, BybitMarketData
 from .model import OnlineSignalModel
 from .storage import SignalStore
 
 
 TIMEFRAMES = ("15m", "1h", "4h", "1d")
+FETCH_TIMEFRAMES = ("5m",) + TIMEFRAMES
 TIMEFRAME_WEIGHTS = {"15m": 1.0, "1h": 1.45, "4h": 1.7, "1d": 1.1}
 
 
@@ -64,7 +72,12 @@ class MarketScanner:
             "order_block": view.order_block,
         }
 
-    def _build_signal(self, market_info: dict, views: dict[str, TimeframeView]) -> dict:
+    def _build_signal(
+        self,
+        market_info: dict,
+        views: dict[str, TimeframeView],
+        timeframe_candles: dict[str, list[dict]],
+    ) -> dict:
         weighted_score = sum(
             views[timeframe].bias * TIMEFRAME_WEIGHTS[timeframe]
             for timeframe in TIMEFRAMES
@@ -107,11 +120,11 @@ class MarketScanner:
             and aligned(views["15m"].order_block["direction"])
         )
         aligned_displacement = aligned(views["15m"].displacement)
-        entry_trigger = (
-            aligned_sweep
-            or aligned_break
-            or (aligned_displacement and (aligned_fvg or aligned_block))
-        )
+        ict_events = recent_ict_events(timeframe_candles["15m"])
+        ict_sweep = ict_events["bullish_sweep" if sign > 0 else "bearish_sweep"]
+        ict_bos = ict_events["bullish_bos" if sign > 0 else "bearish_bos"]
+        entry_fvg = fvg_retest(timeframe_candles["5m"], direction)
+        entry_trigger = ict_sweep and ict_bos and entry_fvg is not None
         htf_aligned = all(
             (views[timeframe].bias > 0 and sign > 0)
             or (views[timeframe].bias < 0 and sign < 0)
@@ -132,6 +145,8 @@ class MarketScanner:
                 aligned_fvg,
                 aligned_block,
                 aligned_displacement,
+                ict_sweep and ict_bos,
+                entry_fvg is not None,
                 views["15m"].volume_z >= 0,
             )
         )
@@ -141,7 +156,7 @@ class MarketScanner:
             and abs(weighted_score) >= 8.5
             and htf_aligned
             and entry_trigger
-            and confluence_count >= 4
+            and confluence_count >= 6
             and not daily_veto
             and not too_extended
             and not low_volatility
@@ -151,9 +166,19 @@ class MarketScanner:
         relevance = "ACTIONABLE" if actionable else "NOT_RELEVANT"
         atr_stop = price - sign * max(atr_15m * 1.25, price * 0.0035)
         structure_stop = (
-            views["15m"].recent_low - atr_15m * 0.15
+            min(
+                value
+                for value in (ict_events["sweep_low"], views["15m"].recent_low)
+                if value is not None
+            )
+            - atr_15m * 0.2
             if sign > 0
-            else views["15m"].recent_high + atr_15m * 0.15
+            else max(
+                value
+                for value in (ict_events["sweep_high"], views["15m"].recent_high)
+                if value is not None
+            )
+            + atr_15m * 0.2
         )
         stop = min(atr_stop, structure_stop) if sign > 0 else max(atr_stop, structure_stop)
         risk_distance = abs(price - stop)
@@ -162,9 +187,11 @@ class MarketScanner:
 
         reasons = [
             f"{agreement}/4 timeframes align {direction.lower()}",
-            f"Setup confluence {confluence_count}/8",
+            f"Setup confluence {confluence_count}/10",
             f"1h/4h context {'aligned' if htf_aligned else 'conflicted'}",
-            f"15m entry trigger {'confirmed' if entry_trigger else 'missing'}",
+            f"15m sweep {'confirmed' if ict_sweep else 'missing'}",
+            f"15m BOS {'confirmed' if ict_bos else 'missing'}",
+            f"5m FVG retest {'confirmed' if entry_fvg else 'missing'}",
             f"Technical score {weighted_score:.2f}",
             f"Learning model {model_probability * 100:.1f}% over {self.model.samples} samples",
             f"24h change {market_info['change_24h']:.2f}%",
@@ -243,16 +270,17 @@ class MarketScanner:
             try:
                 market = market_info["market"]
                 timeframe_candles = {}
-                for timeframe in TIMEFRAMES:
+                for timeframe in FETCH_TIMEFRAMES:
                     candles = market.klines(market_info["symbol"], timeframe)
                     timeframe_candles[timeframe] = candles
-                    views[timeframe] = analyze_timeframe(timeframe, candles)
+                    if timeframe in TIMEFRAMES:
+                        views[timeframe] = analyze_timeframe(timeframe, candles)
                 self.store.evaluate_demo_trades(
                     market_info["exchange"],
                     market_info["symbol"],
                     timeframe_candles["15m"],
                 )
-                signal = self._build_signal(market_info, views)
+                signal = self._build_signal(market_info, views, timeframe_candles)
                 signal_id = self.store.add_signal(signal)
                 self.store.open_demo_trade(signal_id, signal, notional=10)
                 results.append(signal)

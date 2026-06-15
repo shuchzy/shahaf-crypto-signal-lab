@@ -58,7 +58,7 @@ function renderSignals() {
               </span>
               <strong>${signal.confidence}%</strong>
             </div>
-            <small>איכות סט־אפ ${signal.setup_quality || 0}/8</small>
+            <small>איכות סט־אפ ${signal.setup_quality || 0}/10</small>
             <div class="confidence-track"><i style="width:${signal.confidence}%"></i></div>
           </div>
           <div class="price-grid">

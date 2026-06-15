@@ -116,7 +116,7 @@ class BinanceMarketData:
 class BybitMarketData:
     name = "Bybit"
     base_urls = ("https://api.bybit.com", "https://api.bytick.com")
-    interval_map = {"15m": "15", "1h": "60", "4h": "240", "1d": "D"}
+    interval_map = {"5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "D"}
 
     def __init__(self, timeout: int = 15) -> None:
         self.timeout = timeout

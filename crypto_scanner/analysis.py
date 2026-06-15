@@ -81,6 +81,86 @@ def recent_fvg(candles: list[dict], lookback: int = 40) -> dict | None:
     return found
 
 
+def confirmed_swing_levels(
+    candles: list[dict], left: int = 2, right: int = 2
+) -> tuple[float | None, float | None]:
+    last_high = None
+    last_low = None
+    for index in range(left, len(candles) - right):
+        window = candles[index - left : index + right + 1]
+        if candles[index]["high"] == max(item["high"] for item in window):
+            last_high = candles[index]["high"]
+        if candles[index]["low"] == min(item["low"] for item in window):
+            last_low = candles[index]["low"]
+    return last_high, last_low
+
+
+def recent_ict_events(
+    candles: list[dict], lookback: int = 20, event_window: int = 8
+) -> dict:
+    closed = candles[:-1]
+    events = {
+        "bullish_sweep": False,
+        "bearish_sweep": False,
+        "bullish_bos": False,
+        "bearish_bos": False,
+        "sweep_low": None,
+        "sweep_high": None,
+        "swing_high": None,
+        "swing_low": None,
+    }
+    start = max(lookback + 5, len(closed) - event_window)
+    for index in range(start, len(closed)):
+        history = closed[:index]
+        if len(history) < lookback + 5:
+            continue
+        current = closed[index]
+        prior = history[-lookback:]
+        prior_low = min(item["low"] for item in prior)
+        prior_high = max(item["high"] for item in prior)
+        swing_high, swing_low = confirmed_swing_levels(history)
+        if current["low"] < prior_low and current["close"] > prior_low:
+            events["bullish_sweep"] = True
+            events["sweep_low"] = prior_low
+        if current["high"] > prior_high and current["close"] < prior_high:
+            events["bearish_sweep"] = True
+            events["sweep_high"] = prior_high
+        if swing_high is not None and current["close"] > swing_high:
+            events["bullish_bos"] = True
+            events["swing_high"] = swing_high
+        if swing_low is not None and current["close"] < swing_low:
+            events["bearish_bos"] = True
+            events["swing_low"] = swing_low
+    return events
+
+
+def fvg_retest(
+    candles: list[dict], direction: str, lookback: int = 40, tolerance: float = 0.15
+) -> dict | None:
+    closed = candles[:-1]
+    if len(closed) < 10:
+        return None
+    latest = closed[-1]
+    for index in range(len(closed) - 2, max(1, len(closed) - lookback - 1), -1):
+        first = closed[index - 2]
+        third = closed[index]
+        if direction == "LONG" and third["low"] > first["high"]:
+            low, high = first["high"], third["low"]
+        elif direction == "SHORT" and third["high"] < first["low"]:
+            low, high = third["high"], first["low"]
+        else:
+            continue
+        height = max(high - low, 1e-12)
+        lower = low - height * tolerance
+        upper = high + height * tolerance
+        touched = latest["low"] <= upper and latest["high"] >= lower
+        midpoint = (low + high) / 2
+        accepted = latest["close"] >= midpoint if direction == "LONG" else latest["close"] <= midpoint
+        if touched and accepted:
+            return {"direction": direction, "low": low, "high": high, "index": index}
+    return None
+
+
 def recent_order_block(candles: list[dict], lookback: int = 35) -> dict | None:
     if len(candles) < 8:
         return None
