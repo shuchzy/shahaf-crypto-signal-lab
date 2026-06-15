@@ -6,6 +6,9 @@
 Local browser-based cryptocurrency market scanner using transparent multi-timeframe
 technical heuristics and a small online learning model.
 
+Public live dashboard:
+[https://shahaf-crypto-signal-lab-live.onrender.com](https://shahaf-crypto-signal-lab-live.onrender.com)
+
 ## הפעלה
 
 לחיצה כפולה על `start.bat`, או:
