@@ -15,6 +15,15 @@ python app.py
 
 לאחר ההפעלה נפתח הדפדפן בכתובת `http://127.0.0.1:8765`.
 
+## Deploy to Render
+
+The repository includes a `render.yaml` Blueprint. Connect the repository to
+Render and deploy the Blueprint to receive a public HTTPS address.
+
+Render's free web service can spin down after inactivity and uses an ephemeral
+filesystem. For continuous scanning and persistent learning history, use an
+always-on instance with persistent storage or an external database.
+
 אפשרויות שימושיות:
 
 ```powershell

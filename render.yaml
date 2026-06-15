@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: shahaf-crypto-signal-lab
+    runtime: python
+    plan: free
+    branch: codex/main
+    buildCommand: ""
+    startCommand: python app.py --host 0.0.0.0 --no-browser
+    healthCheckPath: /health
+    autoDeployTrigger: commit
