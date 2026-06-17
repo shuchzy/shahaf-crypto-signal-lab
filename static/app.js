@@ -58,7 +58,9 @@ function renderSignals() {
               </span>
               <strong>${signal.confidence}%</strong>
             </div>
-            <small>איכות סט־אפ ${signal.setup_quality || 0}/10</small>
+            <small>
+              ${escapeHtml(signal.setup_type || "setup")} · איכות ${signal.setup_quality || 0}/12 · יעד ${signal.estimated_win_rate || "—"}%
+            </small>
             <div class="confidence-track"><i style="width:${signal.confidence}%"></i></div>
           </div>
           <div class="price-grid">

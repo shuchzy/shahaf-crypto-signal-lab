@@ -51,6 +51,8 @@ python app.py --no-browser
 - Private signed-session login configured through deployment secrets
 - $10 demo trades with a minimum 1:3 risk-to-reward ratio
 - Dashboard metrics for trade count, win rate, realized profit, and return
+- Balanced signal engine with continuation, pullback, and liquidity reversal setups
+- Estimated win-rate gate targeting at least 40%, verified only by demo results over time
 
 הנתונים נשמרים מקומית ב-`data/signals.db`. אין צורך במפתח API והמערכת אינה מבצעת עסקאות.
 

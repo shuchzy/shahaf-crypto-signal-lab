@@ -20,6 +20,7 @@ from .storage import SignalStore
 TIMEFRAMES = ("15m", "1h", "4h", "1d")
 FETCH_TIMEFRAMES = ("5m",) + TIMEFRAMES
 TIMEFRAME_WEIGHTS = {"15m": 1.0, "1h": 1.45, "4h": 1.7, "1d": 1.1}
+MIN_TARGET_WIN_RATE = 40.0
 
 
 class MarketScanner:
@@ -103,9 +104,9 @@ class MarketScanner:
         )
         atr_15m = views["15m"].atr
         price = market_info["price"]
-        too_extended = abs(market_info["change_24h"]) > 18
+        too_extended = abs(market_info["change_24h"]) > 24
         low_volatility = views["15m"].atr_pct < 0.12
-        high_volatility = views["15m"].atr_pct > 4.5
+        high_volatility = views["15m"].atr_pct > 5.5
         sign = 1 if direction == "LONG" else -1
         aligned = lambda value: value == ("bullish" if sign > 0 else "bearish")
         aligned_break = views["15m"].structure_break == (
@@ -124,21 +125,51 @@ class MarketScanner:
         ict_sweep = ict_events["bullish_sweep" if sign > 0 else "bearish_sweep"]
         ict_bos = ict_events["bullish_bos" if sign > 0 else "bearish_bos"]
         entry_fvg = fvg_retest(timeframe_candles["5m"], direction)
-        entry_trigger = ict_sweep and ict_bos and entry_fvg is not None
         htf_aligned = all(
             (views[timeframe].bias > 0 and sign > 0)
             or (views[timeframe].bias < 0 and sign < 0)
             for timeframe in ("1h", "4h")
         )
+        htf_support = sum(
+            1
+            for timeframe in ("1h", "4h", "1d")
+            if (views[timeframe].bias > 0 and sign > 0)
+            or (views[timeframe].bias < 0 and sign < 0)
+        )
         daily_veto = (
-            views["1d"].bias < -2.0 if sign > 0 else views["1d"].bias > 2.0
+            views["1d"].bias < -3.25 if sign > 0 else views["1d"].bias > 3.25
         )
         open_position = self.store.has_open_demo_trade(
             market_info["exchange"], market_info["symbol"]
         )
+        momentum_ok = (
+            42 <= views["15m"].rsi <= 78 if sign > 0 else 22 <= views["15m"].rsi <= 58
+        )
+        volume_ok = views["15m"].volume_z >= -0.8
+        continuation_setup = bool(htf_support >= 2 and (
+            ict_bos or aligned_break or aligned_displacement
+        ) and (entry_fvg or aligned_fvg or aligned_block))
+        pullback_setup = bool(htf_support >= 2 and (
+            entry_fvg or aligned_block
+        ) and views["15m"].structure in ("HH_HL", "LH_LL"))
+        reversal_setup = (
+            ict_sweep
+            and (ict_bos or aligned_break or aligned_displacement)
+            and not daily_veto
+        )
+        entry_trigger = continuation_setup or pullback_setup or reversal_setup
+        if reversal_setup:
+            setup_type = "liquidity reversal"
+        elif pullback_setup:
+            setup_type = "trend pullback"
+        elif continuation_setup:
+            setup_type = "breakout continuation"
+        else:
+            setup_type = "waiting"
         confluence_count = sum(
             (
                 htf_aligned,
+                htf_support >= 2,
                 entry_trigger,
                 aligned_sweep,
                 aligned_break,
@@ -147,16 +178,28 @@ class MarketScanner:
                 aligned_displacement,
                 ict_sweep and ict_bos,
                 entry_fvg is not None,
-                views["15m"].volume_z >= 0,
+                momentum_ok,
+                volume_ok,
             )
         )
+        estimated_win_rate = 31.0 + confluence_count * 3.1
+        estimated_win_rate += 3.0 if htf_aligned else 0.0
+        estimated_win_rate += 2.0 if entry_fvg else 0.0
+        estimated_win_rate += 2.0 if aligned_block else 0.0
+        estimated_win_rate += 1.5 if momentum_ok else -2.5
+        estimated_win_rate += 1.5 if volume_ok else -2.0
+        if self.model.samples >= 40:
+            estimated_win_rate = estimated_win_rate * 0.75 + model_probability * 100 * 0.25
+        estimated_win_rate = clamp(estimated_win_rate, 5.0, 78.0)
         actionable = (
-            confidence >= 72
-            and agreement >= 3
-            and abs(weighted_score) >= 8.5
-            and htf_aligned
+            confidence >= 64
+            and agreement >= 2
+            and abs(weighted_score) >= 4.5
             and entry_trigger
-            and confluence_count >= 6
+            and confluence_count >= 5
+            and estimated_win_rate >= MIN_TARGET_WIN_RATE
+            and momentum_ok
+            and volume_ok
             and not daily_veto
             and not too_extended
             and not low_volatility
@@ -164,7 +207,11 @@ class MarketScanner:
             and not open_position
         )
         relevance = "ACTIONABLE" if actionable else "NOT_RELEVANT"
-        atr_stop = price - sign * max(atr_15m * 1.25, price * 0.0035)
+        max_risk_distance = price * 0.025
+        atr_stop = price - sign * min(
+            max(atr_15m * 1.15, price * 0.0035),
+            max_risk_distance,
+        )
         structure_stop = (
             min(
                 value
@@ -182,12 +229,17 @@ class MarketScanner:
         )
         stop = min(atr_stop, structure_stop) if sign > 0 else max(atr_stop, structure_stop)
         risk_distance = abs(price - stop)
+        if risk_distance > max_risk_distance:
+            stop = price - sign * max_risk_distance
+            risk_distance = max_risk_distance
         target_1 = price + sign * risk_distance * 3.0
         target_2 = price + sign * risk_distance * 5.0
 
         reasons = [
             f"{agreement}/4 timeframes align {direction.lower()}",
-            f"Setup confluence {confluence_count}/10",
+            f"Setup type {setup_type}",
+            f"Setup confluence {confluence_count}/12",
+            f"Estimated win-rate target {estimated_win_rate:.1f}% (demo will verify)",
             f"1h/4h context {'aligned' if htf_aligned else 'conflicted'}",
             f"15m sweep {'confirmed' if ict_sweep else 'missing'}",
             f"15m BOS {'confirmed' if ict_bos else 'missing'}",
@@ -204,8 +256,14 @@ class MarketScanner:
             reasons.append("15m volatility is too high for controlled risk")
         if daily_veto:
             reasons.append("Daily context strongly opposes the setup")
+        if not momentum_ok:
+            reasons.append("15m RSI is not in the preferred entry zone")
+        if not volume_ok:
+            reasons.append("Volume confirmation is too weak")
         if open_position:
             reasons.append("A demo position is already open for this market")
+        if risk_distance >= max_risk_distance:
+            reasons.append("Risk capped to keep the 3R target reachable")
         if not actionable:
             reasons.append("No sufficiently strong setup right now")
         for timeframe in TIMEFRAMES:
@@ -230,6 +288,8 @@ class MarketScanner:
             "take_profit_2": target_2 if actionable else None,
             "risk_reward": 3.0 if actionable else None,
             "setup_quality": confluence_count,
+            "estimated_win_rate": round(estimated_win_rate, 1),
+            "setup_type": setup_type,
             "score": round(weighted_score, 3),
             "reasons": reasons,
             "timeframes": {

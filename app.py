@@ -325,7 +325,12 @@ def main() -> None:
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8765")))
     parser.add_argument("--interval", type=int, default=15, help="Scan interval in minutes")
-    parser.add_argument("--top", type=int, default=15, help="Number of top-volume USDT pairs")
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=int(os.environ.get("TOP_SYMBOLS", "20")),
+        help="Number of top-volume USDT pairs",
+    )
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 

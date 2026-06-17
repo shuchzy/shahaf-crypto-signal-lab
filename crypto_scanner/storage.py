@@ -30,6 +30,8 @@ class SignalStore:
                     take_profit_2 REAL,
                     risk_reward REAL,
                     setup_quality INTEGER NOT NULL DEFAULT 0,
+                    estimated_win_rate REAL,
+                    setup_type TEXT,
                     score REAL NOT NULL,
                     reasons_json TEXT NOT NULL,
                     timeframes_json TEXT NOT NULL,
@@ -53,6 +55,10 @@ class SignalStore:
                 conn.execute(
                     "ALTER TABLE signals ADD COLUMN setup_quality INTEGER NOT NULL DEFAULT 0"
                 )
+            if "estimated_win_rate" not in columns:
+                conn.execute("ALTER TABLE signals ADD COLUMN estimated_win_rate REAL")
+            if "setup_type" not in columns:
+                conn.execute("ALTER TABLE signals ADD COLUMN setup_type TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS demo_trades (
@@ -96,8 +102,9 @@ class SignalStore:
                 INSERT INTO signals (
                     created_at, exchange, symbol, direction, relevance, confidence, price,
                     stop_loss, take_profit_1, take_profit_2, risk_reward, score,
-                    setup_quality, reasons_json, timeframes_json, features_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    setup_quality, estimated_win_rate, setup_type,
+                    reasons_json, timeframes_json, features_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal["created_at"],
@@ -113,6 +120,8 @@ class SignalStore:
                     signal.get("risk_reward"),
                     signal["score"],
                     signal.get("setup_quality", 0),
+                    signal.get("estimated_win_rate"),
+                    signal.get("setup_type"),
                     json.dumps(signal["reasons"]),
                     json.dumps(signal["timeframes"]),
                     json.dumps(signal["features"]),
