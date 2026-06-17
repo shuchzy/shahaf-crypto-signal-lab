@@ -8,6 +8,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 MIN_DEMO_RISK_REWARD = 1.2
+INITIAL_DEMO_BALANCE = 100.0
+MIN_DEMO_NOTIONAL = 5.0
+MAX_DEMO_NOTIONAL = 25.0
 
 
 class SignalStore:
@@ -73,11 +76,14 @@ class SignalStore:
                     direction TEXT NOT NULL,
                     entry_price REAL NOT NULL,
                     stop_loss REAL NOT NULL,
+                    initial_stop_loss REAL,
                     take_profit REAL NOT NULL,
                     notional REAL NOT NULL,
                     quantity REAL NOT NULL,
                     risk_amount REAL NOT NULL,
+                    initial_risk_amount REAL,
                     risk_reward REAL NOT NULL,
+                    stop_stage TEXT NOT NULL DEFAULT 'INITIAL',
                     status TEXT NOT NULL DEFAULT 'OPEN',
                     exit_price REAL,
                     pnl REAL,
@@ -96,6 +102,9 @@ class SignalStore:
                 for row in conn.execute("PRAGMA table_info(demo_trades)").fetchall()
             }
             for name, definition in {
+                "initial_stop_loss": "REAL",
+                "initial_risk_amount": "REAL",
+                "stop_stage": "TEXT NOT NULL DEFAULT 'INITIAL'",
                 "current_price": "REAL",
                 "current_pnl": "REAL NOT NULL DEFAULT 0",
                 "current_pnl_pct": "REAL NOT NULL DEFAULT 0",
@@ -103,6 +112,26 @@ class SignalStore:
             }.items():
                 if name not in trade_columns:
                     conn.execute(f"ALTER TABLE demo_trades ADD COLUMN {name} {definition}")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS demo_wallet (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    balance REAL NOT NULL
+                )
+                """
+            )
+            wallet = conn.execute("SELECT balance FROM demo_wallet WHERE id = 1").fetchone()
+            if wallet is None:
+                open_notional = conn.execute(
+                    "SELECT COALESCE(SUM(notional), 0) FROM demo_trades WHERE status = 'OPEN'"
+                ).fetchone()[0]
+                realized = conn.execute(
+                    "SELECT COALESCE(SUM(pnl), 0) FROM demo_trades WHERE status = 'CLOSED'"
+                ).fetchone()[0]
+                conn.execute(
+                    "INSERT INTO demo_wallet (id, balance) VALUES (1, ?)",
+                    (max(0.0, INITIAL_DEMO_BALANCE + realized - open_notional),),
+                )
             conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_demo_open_symbol
@@ -182,23 +211,54 @@ class SignalStore:
                 (status, outcome_return, signal_id),
             )
 
-    def open_demo_trade(self, signal_id: int, signal: dict, notional: float = 10.0) -> bool:
+    def wallet_balance(self, conn) -> float:
+        row = conn.execute("SELECT balance FROM demo_wallet WHERE id = 1").fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO demo_wallet (id, balance) VALUES (1, ?)",
+                (INITIAL_DEMO_BALANCE,),
+            )
+            return INITIAL_DEMO_BALANCE
+        return float(row[0])
+
+    def _sized_notional(self, conn, signal: dict, requested: float | None) -> float:
+        balance = self.wallet_balance(conn)
+        if requested is not None:
+            return min(float(requested), balance)
+        entry = float(signal["price"])
+        stop = float(signal["stop_loss"])
+        risk_pct = abs(entry - stop) / entry if entry else 0.0
+        if risk_pct <= 0:
+            return 0.0
+        setup_type = signal.get("setup_type") or ""
+        base_risk = 0.012 if setup_type == "fast scalp" else 0.018
+        confidence_bonus = max(0.0, float(signal.get("confidence", 0)) - 65.0) / 1000
+        risk_budget = balance * min(0.025, base_risk + confidence_bonus)
+        risk_sized = risk_budget / risk_pct
+        exposure_cap = min(MAX_DEMO_NOTIONAL, balance * 0.25)
+        return min(balance, exposure_cap, risk_sized)
+
+    def open_demo_trade(self, signal_id: int, signal: dict, notional: float | None = None) -> bool:
         if signal["relevance"] != "ACTIONABLE" or signal.get("risk_reward", 0) < MIN_DEMO_RISK_REWARD:
             return False
         entry = float(signal["price"])
         stop = float(signal["stop_loss"])
         target = float(signal["take_profit_1"])
-        quantity = notional / entry
-        risk_amount = abs(entry - stop) * quantity
         try:
             with self.lock, closing(self._connect()) as conn, conn:
+                notional = self._sized_notional(conn, signal, notional)
+                if notional < MIN_DEMO_NOTIONAL:
+                    return False
+                quantity = notional / entry
+                risk_amount = abs(entry - stop) * quantity
                 conn.execute(
                     """
                     INSERT INTO demo_trades (
                         signal_id, opened_at, exchange, symbol, direction,
-                        entry_price, stop_loss, take_profit, notional, quantity,
-                        risk_amount, risk_reward, current_price
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        entry_price, stop_loss, initial_stop_loss, take_profit,
+                        notional, quantity, risk_amount, initial_risk_amount,
+                        risk_reward, current_price
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         signal_id,
@@ -208,13 +268,19 @@ class SignalStore:
                         signal["direction"],
                         entry,
                         stop,
+                        stop,
                         target,
                         notional,
                         quantity,
                         risk_amount,
+                        risk_amount,
                         signal["risk_reward"],
                         entry,
                     ),
+                )
+                conn.execute(
+                    "UPDATE demo_wallet SET balance = balance - ? WHERE id = 1",
+                    (notional,),
                 )
             return True
         except sqlite3.IntegrityError:
@@ -226,7 +292,8 @@ class SignalStore:
             rows = conn.execute(
                 """
                 SELECT id, exchange, symbol, direction, entry_price, stop_loss,
-                       take_profit, notional, quantity
+                       initial_stop_loss, take_profit, notional, quantity,
+                       stop_stage
                 FROM demo_trades
                 WHERE status = 'OPEN'
                 ORDER BY id ASC
@@ -294,6 +361,7 @@ class SignalStore:
                 for candle in candles:
                     if candle["open_time"] <= opened_ms:
                         continue
+                    stop_loss = trade["stop_loss"]
                     if trade["direction"] == "LONG":
                         stop_hit = candle["low"] <= trade["stop_loss"]
                         target_hit = candle["high"] >= trade["take_profit"]
@@ -317,7 +385,8 @@ class SignalStore:
                         """
                         UPDATE demo_trades
                         SET status = 'CLOSED', closed_at = ?, exit_price = ?,
-                            pnl = ?, pnl_pct = ?, close_reason = ?
+                            pnl = ?, pnl_pct = ?, current_price = ?,
+                            current_pnl = ?, current_pnl_pct = ?, close_reason = ?
                         WHERE id = ?
                         """,
                         (
@@ -325,9 +394,16 @@ class SignalStore:
                             exit_price,
                             pnl,
                             pnl_pct,
+                            exit_price,
+                            pnl,
+                            pnl_pct,
                             close_reason,
                             trade["id"],
                         ),
+                    )
+                    conn.execute(
+                        "UPDATE demo_wallet SET balance = balance + ? WHERE id = 1",
+                        (trade["notional"] + pnl,),
                     )
                     resolved += 1
                     break
@@ -336,6 +412,23 @@ class SignalStore:
                     sign = 1 if trade["direction"] == "LONG" else -1
                     pnl = trade["quantity"] * (price - trade["entry_price"]) * sign
                     pnl_pct = pnl / trade["notional"] * 100
+                    original_risk = abs(trade["entry_price"] - (trade["initial_stop_loss"] or trade["stop_loss"]))
+                    current_reward = max(0.0, (price - trade["entry_price"]) * sign)
+                    progress_r = current_reward / original_risk if original_risk else 0.0
+                    new_stop = trade["stop_loss"]
+                    stop_stage = trade["stop_stage"] or "INITIAL"
+                    if progress_r >= 1.8:
+                        trailed = price - sign * original_risk * 0.65
+                        new_stop = max(new_stop, trailed) if sign > 0 else min(new_stop, trailed)
+                        stop_stage = "TRAILING"
+                    elif progress_r >= 1.0:
+                        breakeven = trade["entry_price"] + sign * original_risk * 0.08
+                        new_stop = max(new_stop, breakeven) if sign > 0 else min(new_stop, breakeven)
+                        stop_stage = "BREAKEVEN"
+                    elif progress_r >= 0.55:
+                        partial = trade["entry_price"] - sign * original_risk * 0.45
+                        new_stop = max(new_stop, partial) if sign > 0 else min(new_stop, partial)
+                        stop_stage = "REDUCED_RISK"
                     marked_at = datetime.fromtimestamp(
                         candles[-1]["close_time"] / 1000,
                         tz=timezone.utc,
@@ -343,11 +436,11 @@ class SignalStore:
                     conn.execute(
                         """
                         UPDATE demo_trades
-                        SET current_price = ?, current_pnl = ?,
-                            current_pnl_pct = ?, last_mark_at = ?
+                        SET stop_loss = ?, stop_stage = ?, current_price = ?,
+                            current_pnl = ?, current_pnl_pct = ?, last_mark_at = ?
                         WHERE id = ?
                         """,
-                        (price, pnl, pnl_pct, marked_at, trade["id"]),
+                        (new_stop, stop_stage, price, pnl, pnl_pct, marked_at, trade["id"]),
                     )
             return resolved
 
@@ -366,11 +459,20 @@ class SignalStore:
                 FROM demo_trades
                 """
             ).fetchone()
+            wallet = self.wallet_balance(conn)
+            open_notional = conn.execute(
+                "SELECT COALESCE(SUM(notional), 0) FROM demo_trades WHERE status = 'OPEN'"
+            ).fetchone()[0] or 0
         total, open_count, closed, wins, losses, pnl, open_pnl = [
             value or 0 for value in row
         ]
         total_pnl = pnl + open_pnl
+        equity = wallet + open_notional + open_pnl
         return {
+            "initial_balance": INITIAL_DEMO_BALANCE,
+            "cash_balance": round(wallet, 4),
+            "open_allocated": round(open_notional, 4),
+            "equity": round(equity, 4),
             "total_trades": total,
             "open_trades": open_count,
             "closed_trades": closed,

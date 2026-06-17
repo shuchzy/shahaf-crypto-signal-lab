@@ -433,7 +433,7 @@ class MarketScanner:
                 )
                 signal = self._build_signal(market_info, views, timeframe_candles)
                 signal_id = self.store.add_signal(signal)
-                self.store.open_demo_trade(signal_id, signal, notional=10)
+                self.store.open_demo_trade(signal_id, signal)
                 results.append(signal)
                 print(
                     f"[signal] {signal['exchange']} {signal['symbol']} {signal['direction']} "

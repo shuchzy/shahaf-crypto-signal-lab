@@ -88,13 +88,13 @@ function applySnapshot(payload) {
   state.signals = signals || [];
   state.nextScanAt = new Date(status.next_scan_at);
   const demo = stats.demo || {};
-  $("#totalTrades").textContent = demo.total_trades || 0;
-  $("#openTrades").textContent = demo.open_trades || 0;
+  $("#walletBalance").textContent = `$${Number(demo.cash_balance ?? 100).toFixed(2)}`;
+  $("#walletEquity").textContent = `$${Number(demo.equity ?? 100).toFixed(2)}`;
+  $("#walletEquity").className = Number(demo.equity ?? 100) >= Number(demo.initial_balance ?? 100) ? "positive" : "negative";
+  $("#tradeCount").textContent = `${demo.total_trades || 0} / ${demo.open_trades || 0}`;
   $("#winRate").textContent = demo.win_rate == null ? "—" : `${demo.win_rate.toFixed(1)}%`;
   $("#openPnl").textContent = `$${Number(demo.open_pnl || 0).toFixed(2)}`;
   $("#openPnl").className = Number(demo.open_pnl || 0) >= 0 ? "positive" : "negative";
-  $("#realizedPnl").textContent = `$${Number(demo.realized_pnl || 0).toFixed(2)}`;
-  $("#realizedPnl").className = Number(demo.realized_pnl || 0) >= 0 ? "positive" : "negative";
   $("#totalPnl").textContent = `$${Number(demo.total_pnl || 0).toFixed(2)}`;
   $("#totalPnl").className = Number(demo.total_pnl || 0) >= 0 ? "positive" : "negative";
   if (state.signals.length) {

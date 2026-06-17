@@ -57,7 +57,7 @@ class StorageTests(unittest.TestCase):
             store = SignalStore(Path(directory) / "signals.db")
             signal = self.signal()
             signal_id = store.add_signal(signal)
-            self.assertTrue(store.open_demo_trade(signal_id, signal))
+            self.assertTrue(store.open_demo_trade(signal_id, signal, notional=10))
             store.evaluate_demo_trades(
                 "Bybit",
                 "BTCUSDT",
@@ -81,7 +81,7 @@ class StorageTests(unittest.TestCase):
             store = SignalStore(Path(directory) / "signals.db")
             signal = self.signal()
             signal_id = store.add_signal(signal)
-            self.assertTrue(store.open_demo_trade(signal_id, signal))
+            self.assertTrue(store.open_demo_trade(signal_id, signal, notional=10))
             self.assertEqual(len(store.open_demo_positions()), 1)
             store.mark_open_trade("Bybit", "BTCUSDT", 101)
             stats = store.demo_stats()
@@ -94,7 +94,7 @@ class StorageTests(unittest.TestCase):
             store = SignalStore(Path(directory) / "signals.db")
             signal = self.signal()
             signal_id = store.add_signal(signal)
-            self.assertTrue(store.open_demo_trade(signal_id, signal))
+            self.assertTrue(store.open_demo_trade(signal_id, signal, notional=10))
             store.evaluate_demo_trades(
                 "Bybit",
                 "BTCUSDT",
@@ -119,6 +119,55 @@ class StorageTests(unittest.TestCase):
             signal_id = store.add_signal(signal)
             self.assertTrue(store.open_demo_trade(signal_id, signal))
             self.assertEqual(store.demo_stats()["total_trades"], 1)
+
+    def test_demo_wallet_allocates_and_releases_notional(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SignalStore(Path(directory) / "signals.db")
+            signal = self.signal()
+            signal_id = store.add_signal(signal)
+            self.assertTrue(store.open_demo_trade(signal_id, signal, notional=20))
+            stats = store.demo_stats()
+            self.assertAlmostEqual(stats["cash_balance"], 80)
+            self.assertAlmostEqual(stats["open_allocated"], 20)
+            self.assertAlmostEqual(stats["equity"], 100)
+            store.evaluate_demo_trades(
+                "Bybit",
+                "BTCUSDT",
+                [
+                    {
+                        "open_time": 1781525700000,
+                        "close_time": 1781526599999,
+                        "high": 103.2,
+                        "low": 100,
+                    }
+                ],
+            )
+            stats = store.demo_stats()
+            self.assertAlmostEqual(stats["cash_balance"], 100.6)
+            self.assertAlmostEqual(stats["equity"], 100.6)
+
+    def test_demo_trade_promotes_stop_after_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SignalStore(Path(directory) / "signals.db")
+            signal = self.signal()
+            signal_id = store.add_signal(signal)
+            self.assertTrue(store.open_demo_trade(signal_id, signal, notional=10))
+            store.evaluate_demo_trades(
+                "Bybit",
+                "BTCUSDT",
+                [
+                    {
+                        "open_time": 1781525700000,
+                        "close_time": 1781526599999,
+                        "high": 101.2,
+                        "low": 100.4,
+                        "close": 101.05,
+                    }
+                ],
+            )
+            position = store.open_demo_positions()[0]
+            self.assertGreater(position["stop_loss"], 100)
+            self.assertEqual(position["stop_stage"], "BREAKEVEN")
 
     def test_demo_trade_rejects_risk_reward_below_floor(self):
         with tempfile.TemporaryDirectory() as directory:
