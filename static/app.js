@@ -59,7 +59,7 @@ function renderSignals() {
               <strong>${signal.confidence}%</strong>
             </div>
             <small>
-              ${escapeHtml(signal.setup_type || "setup")} · איכות ${signal.setup_quality || 0}/12 · יעד ${signal.estimated_win_rate || "—"}%
+              ${escapeHtml(signal.setup_type || "setup")} · איכות ${signal.setup_quality || 0}/15 · יעד ${signal.estimated_win_rate || "—"}%
             </small>
             <div class="confidence-track"><i style="width:${signal.confidence}%"></i></div>
           </div>

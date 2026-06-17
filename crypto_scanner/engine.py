@@ -21,6 +21,7 @@ TIMEFRAMES = ("15m", "1h", "4h", "1d")
 FETCH_TIMEFRAMES = ("5m",) + TIMEFRAMES
 TIMEFRAME_WEIGHTS = {"15m": 1.0, "1h": 1.45, "4h": 1.7, "1d": 1.1}
 MIN_TARGET_WIN_RATE = 40.0
+MIN_SCALP_RISK_REWARD = 1.2
 
 
 class MarketScanner:
@@ -125,6 +126,8 @@ class MarketScanner:
             96,
         )
         atr_15m = views["15m"].atr
+        scalp_view = analyze_timeframe("5m", timeframe_candles["5m"])
+        atr_5m = scalp_view.atr
         price = market_info["price"]
         too_extended = abs(market_info["change_24h"]) > 24
         low_volatility = views["15m"].atr_pct < 0.12
@@ -143,6 +146,14 @@ class MarketScanner:
             and aligned(views["15m"].order_block["direction"])
         )
         aligned_displacement = aligned(views["15m"].displacement)
+        scalp_aligned_break = scalp_view.structure_break == (
+            "bullish_bos" if sign > 0 else "bearish_bos"
+        )
+        scalp_aligned_displacement = aligned(scalp_view.displacement)
+        scalp_aligned_fvg = bool(scalp_view.fvg and aligned(scalp_view.fvg["direction"]))
+        scalp_aligned_block = bool(
+            scalp_view.order_block and aligned(scalp_view.order_block["direction"])
+        )
         ict_events = recent_ict_events(timeframe_candles["15m"])
         ict_sweep = ict_events["bullish_sweep" if sign > 0 else "bearish_sweep"]
         ict_bos = ict_events["bullish_bos" if sign > 0 else "bearish_bos"]
@@ -167,7 +178,27 @@ class MarketScanner:
         momentum_ok = (
             42 <= views["15m"].rsi <= 78 if sign > 0 else 22 <= views["15m"].rsi <= 58
         )
+        scalp_momentum_ok = (
+            45 <= scalp_view.rsi <= 82 if sign > 0 else 18 <= scalp_view.rsi <= 55
+        )
+        scalp_volatility_ok = 0.05 <= scalp_view.atr_pct <= 1.9
         volume_ok = views["15m"].volume_z >= -0.8
+        scalp_volume_ok = scalp_view.volume_z >= -0.4
+        fast_scalp_setup = bool(
+            htf_support >= 1
+            and (views["15m"].bias * sign > 0 or scalp_view.bias * sign >= 2.4 or htf_aligned)
+            and (scalp_aligned_break or scalp_aligned_displacement)
+            and (
+                scalp_aligned_fvg
+                or scalp_aligned_block
+                or entry_fvg
+                or abs(scalp_view.bias) >= 3.0
+            )
+            and scalp_momentum_ok
+            and scalp_volatility_ok
+            and scalp_volume_ok
+            and not daily_veto
+        )
         continuation_setup = bool(htf_support >= 2 and (
             ict_bos or aligned_break or aligned_displacement
         ) and (entry_fvg or aligned_fvg or aligned_block))
@@ -179,8 +210,10 @@ class MarketScanner:
             and (ict_bos or aligned_break or aligned_displacement)
             and not daily_veto
         )
-        entry_trigger = continuation_setup or pullback_setup or reversal_setup
-        if reversal_setup:
+        entry_trigger = continuation_setup or pullback_setup or reversal_setup or fast_scalp_setup
+        if fast_scalp_setup:
+            setup_type = "fast scalp"
+        elif reversal_setup:
             setup_type = "liquidity reversal"
         elif pullback_setup:
             setup_type = "trend pullback"
@@ -202,6 +235,9 @@ class MarketScanner:
                 entry_fvg is not None,
                 momentum_ok,
                 volume_ok,
+                fast_scalp_setup,
+                scalp_momentum_ok,
+                scalp_volume_ok,
             )
         )
         estimated_win_rate = 31.0 + confluence_count * 3.1
@@ -210,57 +246,87 @@ class MarketScanner:
         estimated_win_rate += 2.0 if aligned_block else 0.0
         estimated_win_rate += 1.5 if momentum_ok else -2.5
         estimated_win_rate += 1.5 if volume_ok else -2.0
+        estimated_win_rate += 5.0 if fast_scalp_setup else 0.0
+        estimated_win_rate += 2.0 if scalp_momentum_ok and scalp_volume_ok else 0.0
         if self.model.samples >= 40:
             estimated_win_rate = estimated_win_rate * 0.75 + model_probability * 100 * 0.25
         estimated_win_rate = clamp(estimated_win_rate, 5.0, 78.0)
-        actionable = (
+        standard_actionable = (
             confidence >= 64
             and agreement >= 2
             and abs(weighted_score) >= 4.5
             and entry_trigger
             and confluence_count >= 5
             and estimated_win_rate >= MIN_TARGET_WIN_RATE
-            and momentum_ok
-            and volume_ok
+            and (momentum_ok or fast_scalp_setup)
+            and (volume_ok or fast_scalp_setup)
             and not daily_veto
             and not too_extended
             and not low_volatility
             and not high_volatility
             and not open_position
         )
+        scalp_actionable = (
+            fast_scalp_setup
+            and confidence >= 58
+            and confluence_count >= 5
+            and estimated_win_rate >= 43
+            and not too_extended
+            and not open_position
+        )
+        actionable = standard_actionable or scalp_actionable
         relevance = "ACTIONABLE" if actionable else "NOT_RELEVANT"
-        max_risk_distance = price * 0.025
+        risk_reward = 3.0
+        if fast_scalp_setup:
+            risk_reward = 1.35
+            if htf_aligned and confluence_count >= 8:
+                risk_reward = 1.8
+            if htf_aligned and confluence_count >= 10 and entry_fvg:
+                risk_reward = 2.2
+        elif reversal_setup:
+            risk_reward = 2.0
+        elif pullback_setup and confluence_count < 7:
+            risk_reward = 2.0
+        max_risk_distance = price * (0.009 if fast_scalp_setup else 0.025)
+        atr_basis = atr_5m if fast_scalp_setup and atr_5m > 0 else atr_15m
         atr_stop = price - sign * min(
-            max(atr_15m * 1.15, price * 0.0035),
+            max(atr_basis * (1.05 if fast_scalp_setup else 1.15), price * 0.0025),
             max_risk_distance,
         )
         structure_stop = (
             min(
                 value
-                for value in (ict_events["sweep_low"], views["15m"].recent_low)
+                for value in (
+                    ict_events["sweep_low"],
+                    scalp_view.recent_low if fast_scalp_setup else views["15m"].recent_low,
+                )
                 if value is not None
             )
-            - atr_15m * 0.2
+            - atr_basis * 0.15
             if sign > 0
             else max(
                 value
-                for value in (ict_events["sweep_high"], views["15m"].recent_high)
+                for value in (
+                    ict_events["sweep_high"],
+                    scalp_view.recent_high if fast_scalp_setup else views["15m"].recent_high,
+                )
                 if value is not None
             )
-            + atr_15m * 0.2
+            + atr_basis * 0.15
         )
         stop = min(atr_stop, structure_stop) if sign > 0 else max(atr_stop, structure_stop)
         risk_distance = abs(price - stop)
         if risk_distance > max_risk_distance:
             stop = price - sign * max_risk_distance
             risk_distance = max_risk_distance
-        target_1 = price + sign * risk_distance * 3.0
-        target_2 = price + sign * risk_distance * 5.0
+        target_1 = price + sign * risk_distance * risk_reward
+        target_2 = price + sign * risk_distance * max(risk_reward * 1.7, risk_reward + 0.8)
 
         reasons = [
             f"{agreement}/4 timeframes align {direction.lower()}",
             f"Setup type {setup_type}",
-            f"Setup confluence {confluence_count}/12",
+            f"Setup confluence {confluence_count}/15",
+            f"Dynamic R:R 1:{risk_reward:.2f}",
             f"Estimated win-rate target {estimated_win_rate:.1f}% (demo will verify)",
             f"1h/4h context {'aligned' if htf_aligned else 'conflicted'}",
             f"15m sweep {'confirmed' if ict_sweep else 'missing'}",
@@ -282,6 +348,8 @@ class MarketScanner:
             reasons.append("15m RSI is not in the preferred entry zone")
         if not volume_ok:
             reasons.append("Volume confirmation is too weak")
+        if fast_scalp_setup:
+            reasons.append("Fast scalp mode: tighter stop and quicker target")
         if open_position:
             reasons.append("A demo position is already open for this market")
         if risk_distance >= max_risk_distance:
@@ -308,7 +376,7 @@ class MarketScanner:
             "stop_loss": stop if actionable else None,
             "take_profit_1": target_1 if actionable else None,
             "take_profit_2": target_2 if actionable else None,
-            "risk_reward": 3.0 if actionable else None,
+            "risk_reward": round(risk_reward, 2) if actionable else None,
             "setup_quality": confluence_count,
             "estimated_win_rate": round(estimated_win_rate, 1),
             "setup_type": setup_type,

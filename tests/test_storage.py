@@ -112,10 +112,18 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(stats["closed_trades"], 0)
             self.assertAlmostEqual(stats["open_pnl"], 0.1)
 
-    def test_demo_trade_rejects_risk_reward_below_three(self):
+    def test_demo_trade_allows_dynamic_risk_reward_above_floor(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SignalStore(Path(directory) / "signals.db")
-            signal = self.signal(risk_reward=2.5)
+            signal = self.signal(risk_reward=1.5)
+            signal_id = store.add_signal(signal)
+            self.assertTrue(store.open_demo_trade(signal_id, signal))
+            self.assertEqual(store.demo_stats()["total_trades"], 1)
+
+    def test_demo_trade_rejects_risk_reward_below_floor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SignalStore(Path(directory) / "signals.db")
+            signal = self.signal(risk_reward=1.1)
             signal_id = store.add_signal(signal)
             self.assertFalse(store.open_demo_trade(signal_id, signal))
 

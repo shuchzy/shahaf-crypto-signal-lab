@@ -7,6 +7,8 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
+MIN_DEMO_RISK_REWARD = 1.2
+
 
 class SignalStore:
     def __init__(self, path: Path) -> None:
@@ -181,7 +183,7 @@ class SignalStore:
             )
 
     def open_demo_trade(self, signal_id: int, signal: dict, notional: float = 10.0) -> bool:
-        if signal["relevance"] != "ACTIONABLE" or signal.get("risk_reward", 0) < 3:
+        if signal["relevance"] != "ACTIONABLE" or signal.get("risk_reward", 0) < MIN_DEMO_RISK_REWARD:
             return False
         entry = float(signal["price"])
         stop = float(signal["stop_loss"])
@@ -381,7 +383,7 @@ class SignalStore:
             "return_pct": round(pnl / (closed * 10) * 100, 3) if closed else None,
             "total_return_pct": round(total_pnl / (total * 10) * 100, 3) if total else None,
             "trade_size": 10,
-            "minimum_risk_reward": 3,
+            "minimum_risk_reward": MIN_DEMO_RISK_REWARD,
         }
 
     def stats(self) -> dict:

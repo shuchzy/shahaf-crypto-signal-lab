@@ -49,7 +49,7 @@ python app.py --no-browser
 - Live browser updates over Server-Sent Events with heartbeat and reconnect
 - Separate Binance and Bybit spot-market scans
 - Private signed-session login configured through deployment secrets
-- $10 demo trades with a minimum 1:3 risk-to-reward ratio
+- $10 demo trades with dynamic risk-to-reward, including fast scalps and 1:3+ higher-confluence setups
 - Dashboard metrics for trade count, win rate, realized profit, and return
 - Live open PnL and total demo PnL for trades that have not closed yet
 - Balanced signal engine with continuation, pullback, and liquidity reversal setups
