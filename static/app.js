@@ -91,9 +91,12 @@ function applySnapshot(payload) {
   $("#totalTrades").textContent = demo.total_trades || 0;
   $("#openTrades").textContent = demo.open_trades || 0;
   $("#winRate").textContent = demo.win_rate == null ? "—" : `${demo.win_rate.toFixed(1)}%`;
+  $("#openPnl").textContent = `$${Number(demo.open_pnl || 0).toFixed(2)}`;
+  $("#openPnl").className = Number(demo.open_pnl || 0) >= 0 ? "positive" : "negative";
   $("#realizedPnl").textContent = `$${Number(demo.realized_pnl || 0).toFixed(2)}`;
   $("#realizedPnl").className = Number(demo.realized_pnl || 0) >= 0 ? "positive" : "negative";
-  $("#returnPct").textContent = demo.return_pct == null ? "—" : `${demo.return_pct.toFixed(2)}%`;
+  $("#totalPnl").textContent = `$${Number(demo.total_pnl || 0).toFixed(2)}`;
+  $("#totalPnl").className = Number(demo.total_pnl || 0) >= 0 ? "positive" : "negative";
   if (state.signals.length) {
     $("#lastUpdate").textContent = `עדכון חי אחרון: ${fmtTime(state.signals[0].created_at)}`;
   }

@@ -117,6 +117,13 @@ class BybitMarketData:
     name = "Bybit"
     base_urls = ("https://api.bybit.com", "https://api.bytick.com")
     interval_map = {"5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "D"}
+    interval_ms = {
+        "5m": 5 * 60 * 1000,
+        "15m": 15 * 60 * 1000,
+        "1h": 60 * 60 * 1000,
+        "4h": 4 * 60 * 60 * 1000,
+        "1d": 24 * 60 * 60 * 1000,
+    }
 
     def __init__(self, timeout: int = 15) -> None:
         self.timeout = timeout
@@ -198,7 +205,7 @@ class BybitMarketData:
                 "low": float(row[3]),
                 "close": float(row[4]),
                 "volume": float(row[5]),
-                "close_time": int(row[0]),
+                "close_time": int(row[0]) + self.interval_ms[interval] - 1,
                 "quote_volume": float(row[6]),
                 "trades": 0,
             }

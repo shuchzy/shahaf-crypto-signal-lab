@@ -12,7 +12,7 @@ class SignalStore:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(exist_ok=True)
         self.path = path
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         with closing(self._connect()) as conn, conn:
             conn.execute(
                 """
@@ -80,11 +80,27 @@ class SignalStore:
                     exit_price REAL,
                     pnl REAL,
                     pnl_pct REAL,
+                    current_price REAL,
+                    current_pnl REAL NOT NULL DEFAULT 0,
+                    current_pnl_pct REAL NOT NULL DEFAULT 0,
+                    last_mark_at TEXT,
                     close_reason TEXT,
                     FOREIGN KEY(signal_id) REFERENCES signals(id)
                 )
                 """
             )
+            trade_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(demo_trades)").fetchall()
+            }
+            for name, definition in {
+                "current_price": "REAL",
+                "current_pnl": "REAL NOT NULL DEFAULT 0",
+                "current_pnl_pct": "REAL NOT NULL DEFAULT 0",
+                "last_mark_at": "TEXT",
+            }.items():
+                if name not in trade_columns:
+                    conn.execute(f"ALTER TABLE demo_trades ADD COLUMN {name} {definition}")
             conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_demo_open_symbol
@@ -179,8 +195,8 @@ class SignalStore:
                     INSERT INTO demo_trades (
                         signal_id, opened_at, exchange, symbol, direction,
                         entry_price, stop_loss, take_profit, notional, quantity,
-                        risk_amount, risk_reward
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        risk_amount, risk_reward, current_price
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         signal_id,
@@ -195,11 +211,26 @@ class SignalStore:
                         quantity,
                         risk_amount,
                         signal["risk_reward"],
+                        entry,
                     ),
                 )
             return True
         except sqlite3.IntegrityError:
             return False
+
+    def open_demo_positions(self) -> list[dict]:
+        with self.lock, closing(self._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, exchange, symbol, direction, entry_price, stop_loss,
+                       take_profit, notional, quantity
+                FROM demo_trades
+                WHERE status = 'OPEN'
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def has_open_demo_trade(self, exchange: str, symbol: str) -> bool:
         with self.lock, closing(self._connect()) as conn:
@@ -212,6 +243,34 @@ class SignalStore:
                 (exchange, symbol),
             ).fetchone()
         return row is not None
+
+    def mark_open_trade(
+        self, exchange: str, symbol: str, price: float, marked_at: str | None = None
+    ) -> None:
+        marked_at = marked_at or datetime.now(timezone.utc).isoformat()
+        with self.lock, closing(self._connect()) as conn, conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, direction, entry_price, notional, quantity
+                FROM demo_trades
+                WHERE exchange = ? AND symbol = ? AND status = 'OPEN'
+                """,
+                (exchange, symbol),
+            ).fetchall()
+            for trade in rows:
+                sign = 1 if trade["direction"] == "LONG" else -1
+                pnl = trade["quantity"] * (price - trade["entry_price"]) * sign
+                pnl_pct = pnl / trade["notional"] * 100
+                conn.execute(
+                    """
+                    UPDATE demo_trades
+                    SET current_price = ?, current_pnl = ?, current_pnl_pct = ?,
+                        last_mark_at = ?
+                    WHERE id = ?
+                    """,
+                    (price, pnl, pnl_pct, marked_at, trade["id"]),
+                )
 
     def evaluate_demo_trades(
         self, exchange: str, symbol: str, candles: list[dict]
@@ -270,6 +329,24 @@ class SignalStore:
                     )
                     resolved += 1
                     break
+                else:
+                    price = candles[-1]["close"]
+                    sign = 1 if trade["direction"] == "LONG" else -1
+                    pnl = trade["quantity"] * (price - trade["entry_price"]) * sign
+                    pnl_pct = pnl / trade["notional"] * 100
+                    marked_at = datetime.fromtimestamp(
+                        candles[-1]["close_time"] / 1000,
+                        tz=timezone.utc,
+                    ).isoformat()
+                    conn.execute(
+                        """
+                        UPDATE demo_trades
+                        SET current_price = ?, current_pnl = ?,
+                            current_pnl_pct = ?, last_mark_at = ?
+                        WHERE id = ?
+                        """,
+                        (price, pnl, pnl_pct, marked_at, trade["id"]),
+                    )
             return resolved
 
     def demo_stats(self) -> dict:
@@ -282,13 +359,15 @@ class SignalStore:
                     SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) AS closed,
                     SUM(CASE WHEN close_reason = 'TAKE_PROFIT' THEN 1 ELSE 0 END) AS wins,
                     SUM(CASE WHEN close_reason = 'STOP_LOSS' THEN 1 ELSE 0 END) AS losses,
-                    COALESCE(SUM(CASE WHEN status = 'CLOSED' THEN pnl ELSE 0 END), 0) AS pnl
+                    COALESCE(SUM(CASE WHEN status = 'CLOSED' THEN pnl ELSE 0 END), 0) AS pnl,
+                    COALESCE(SUM(CASE WHEN status = 'OPEN' THEN current_pnl ELSE 0 END), 0) AS open_pnl
                 FROM demo_trades
                 """
             ).fetchone()
-        total, open_count, closed, wins, losses, pnl = [
+        total, open_count, closed, wins, losses, pnl, open_pnl = [
             value or 0 for value in row
         ]
+        total_pnl = pnl + open_pnl
         return {
             "total_trades": total,
             "open_trades": open_count,
@@ -297,7 +376,10 @@ class SignalStore:
             "losses": losses,
             "win_rate": wins / closed * 100 if closed else None,
             "realized_pnl": round(pnl, 4),
+            "open_pnl": round(open_pnl, 4),
+            "total_pnl": round(total_pnl, 4),
             "return_pct": round(pnl / (closed * 10) * 100, 3) if closed else None,
+            "total_return_pct": round(total_pnl / (total * 10) * 100, 3) if total else None,
             "trade_size": 10,
             "minimum_risk_reward": 3,
         }

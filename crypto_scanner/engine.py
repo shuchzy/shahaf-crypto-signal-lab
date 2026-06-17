@@ -34,6 +34,28 @@ class MarketScanner:
             for market in self.markets
         }
 
+    def _market_by_name(self, exchange: str):
+        for market in self.markets:
+            if market.name == exchange:
+                return market
+        raise KeyError(exchange)
+
+    def _update_open_demo_trades(self) -> None:
+        for trade in self.store.open_demo_positions():
+            try:
+                market = self._market_by_name(trade["exchange"])
+                candles = market.klines(trade["symbol"], "5m", limit=80)
+                self.store.evaluate_demo_trades(
+                    trade["exchange"],
+                    trade["symbol"],
+                    candles,
+                )
+            except Exception as exc:
+                print(
+                    f"[trade] {trade['exchange']} {trade['symbol']} update failed: {exc}",
+                    flush=True,
+                )
+
     def _resolve_old_signals(self, prices: dict[str, float]) -> None:
         now = datetime.now(timezone.utc)
         for signal in self.store.pending_for_evaluation():
@@ -300,6 +322,7 @@ class MarketScanner:
         }
 
     def run_scan(self) -> list[dict]:
+        self._update_open_demo_trades()
         ranked = []
         for market in self.markets:
             try:

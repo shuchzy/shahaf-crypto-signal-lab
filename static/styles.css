@@ -91,7 +91,7 @@ button:disabled { opacity: .5; cursor: wait; }
   border-radius: 8px;
   font-size: .9rem;
 }
-.metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 26px; }
+.metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 26px; }
 .metrics article { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
 .metrics span { color: var(--muted); font-size: .82rem; }
 .metrics strong { display: block; margin-top: 9px; font: 700 1.8rem Consolas, monospace; }

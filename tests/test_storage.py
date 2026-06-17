@@ -76,6 +76,42 @@ class StorageTests(unittest.TestCase):
             self.assertAlmostEqual(stats["return_pct"], 3.0)
             self.assertEqual(store.stats()["demo"]["wins"], 1)
 
+    def test_open_demo_trade_marks_unrealized_pnl(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SignalStore(Path(directory) / "signals.db")
+            signal = self.signal()
+            signal_id = store.add_signal(signal)
+            self.assertTrue(store.open_demo_trade(signal_id, signal))
+            self.assertEqual(len(store.open_demo_positions()), 1)
+            store.mark_open_trade("Bybit", "BTCUSDT", 101)
+            stats = store.demo_stats()
+            self.assertEqual(stats["open_trades"], 1)
+            self.assertAlmostEqual(stats["open_pnl"], 0.1)
+            self.assertAlmostEqual(stats["total_pnl"], 0.1)
+
+    def test_demo_trade_marks_open_pnl_when_target_not_hit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SignalStore(Path(directory) / "signals.db")
+            signal = self.signal()
+            signal_id = store.add_signal(signal)
+            self.assertTrue(store.open_demo_trade(signal_id, signal))
+            store.evaluate_demo_trades(
+                "Bybit",
+                "BTCUSDT",
+                [
+                    {
+                        "open_time": 1781525700000,
+                        "close_time": 1781526599999,
+                        "high": 102,
+                        "low": 100,
+                        "close": 101,
+                    }
+                ],
+            )
+            stats = store.demo_stats()
+            self.assertEqual(stats["closed_trades"], 0)
+            self.assertAlmostEqual(stats["open_pnl"], 0.1)
+
     def test_demo_trade_rejects_risk_reward_below_three(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SignalStore(Path(directory) / "signals.db")
