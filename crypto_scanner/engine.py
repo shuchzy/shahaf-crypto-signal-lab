@@ -45,7 +45,9 @@ class MarketScanner:
         for trade in self.store.open_demo_positions():
             try:
                 market = self._market_by_name(trade["exchange"])
-                candles = market.klines(trade["symbol"], "5m", limit=80)
+                # A sleeping cloud instance can miss many five-minute candles.
+                # Sixty hours of 15m history lets the demo ledger catch up safely.
+                candles = market.klines(trade["symbol"], "15m", limit=240)
                 self.store.evaluate_demo_trades(
                     trade["exchange"],
                     trade["symbol"],

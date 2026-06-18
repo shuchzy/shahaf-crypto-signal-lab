@@ -11,6 +11,7 @@ MIN_DEMO_RISK_REWARD = 1.2
 INITIAL_DEMO_BALANCE = 100.0
 MIN_DEMO_NOTIONAL = 5.0
 MAX_DEMO_NOTIONAL = 25.0
+MAX_DEMO_HOLD_HOURS = 24
 
 
 class SignalStore:
@@ -408,6 +409,46 @@ class SignalStore:
                     resolved += 1
                     break
                 else:
+                    latest = candles[-1]
+                    max_hold_ms = MAX_DEMO_HOLD_HOURS * 60 * 60 * 1000
+                    if (
+                        latest["close_time"] >= opened_ms + max_hold_ms
+                        and "close" in latest
+                    ):
+                        exit_price = latest["close"]
+                        sign = 1 if trade["direction"] == "LONG" else -1
+                        pnl = trade["quantity"] * (exit_price - trade["entry_price"]) * sign
+                        pnl_pct = pnl / trade["notional"] * 100
+                        closed_at = datetime.fromtimestamp(
+                            latest["close_time"] / 1000,
+                            tz=timezone.utc,
+                        ).isoformat()
+                        conn.execute(
+                            """
+                            UPDATE demo_trades
+                            SET status = 'CLOSED', closed_at = ?, exit_price = ?,
+                                pnl = ?, pnl_pct = ?, current_price = ?,
+                                current_pnl = ?, current_pnl_pct = ?,
+                                close_reason = 'TIME_EXIT'
+                            WHERE id = ?
+                            """,
+                            (
+                                closed_at,
+                                exit_price,
+                                pnl,
+                                pnl_pct,
+                                exit_price,
+                                pnl,
+                                pnl_pct,
+                                trade["id"],
+                            ),
+                        )
+                        conn.execute(
+                            "UPDATE demo_wallet SET balance = balance + ? WHERE id = 1",
+                            (trade["notional"] + pnl,),
+                        )
+                        resolved += 1
+                        continue
                     price = candles[-1]["close"]
                     sign = 1 if trade["direction"] == "LONG" else -1
                     pnl = trade["quantity"] * (price - trade["entry_price"]) * sign
@@ -452,8 +493,8 @@ class SignalStore:
                     COUNT(*) AS total,
                     SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS open_count,
                     SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) AS closed,
-                    SUM(CASE WHEN close_reason = 'TAKE_PROFIT' THEN 1 ELSE 0 END) AS wins,
-                    SUM(CASE WHEN close_reason = 'STOP_LOSS' THEN 1 ELSE 0 END) AS losses,
+                    SUM(CASE WHEN status = 'CLOSED' AND pnl > 0 THEN 1 ELSE 0 END) AS wins,
+                    SUM(CASE WHEN status = 'CLOSED' AND pnl < 0 THEN 1 ELSE 0 END) AS losses,
                     COALESCE(SUM(CASE WHEN status = 'CLOSED' THEN pnl ELSE 0 END), 0) AS pnl,
                     COALESCE(SUM(CASE WHEN status = 'OPEN' THEN current_pnl ELSE 0 END), 0) AS open_pnl
                 FROM demo_trades
@@ -482,9 +523,9 @@ class SignalStore:
             "realized_pnl": round(pnl, 4),
             "open_pnl": round(open_pnl, 4),
             "total_pnl": round(total_pnl, 4),
-            "return_pct": round(pnl / (closed * 10) * 100, 3) if closed else None,
-            "total_return_pct": round(total_pnl / (total * 10) * 100, 3) if total else None,
-            "trade_size": 10,
+            "return_pct": round(pnl / INITIAL_DEMO_BALANCE * 100, 3),
+            "total_return_pct": round(total_pnl / INITIAL_DEMO_BALANCE * 100, 3),
+            "max_trade_size": MAX_DEMO_NOTIONAL,
             "minimum_risk_reward": MIN_DEMO_RISK_REWARD,
         }
 

@@ -123,6 +123,16 @@ class AppState:
 
     def status(self) -> dict:
         with self.lock:
+            now = time.time()
+            if self.last_finished_at:
+                last_finished = datetime.fromisoformat(self.last_finished_at).timestamp()
+                data_age_seconds = max(0, int(now - last_finished))
+            else:
+                data_age_seconds = None
+            data_stale = (
+                data_age_seconds is None
+                or data_age_seconds > self.interval_seconds * 2
+            )
             return {
                 "running": self.running,
                 "scanning": self.scan_lock.locked(),
@@ -133,6 +143,8 @@ class AppState:
                     self.next_scan_at, tz=timezone.utc
                 ).isoformat(),
                 "interval_seconds": self.interval_seconds,
+                "data_stale": data_stale,
+                "data_age_seconds": data_age_seconds,
                 "source": "Binance + Bybit public spot market data",
                 "connection": "live",
                 "markets": self.scanner.market_health,
@@ -262,7 +274,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 pass
             return
         if path == "/api/status":
-            self.send_json(self.state.status())
+            status = self.state.status()
+            if status["data_stale"] and not status["scanning"]:
+                threading.Thread(target=self.state.scan_once, daemon=True).start()
+                status["scanning"] = True
+            self.send_json(status)
             return
         if path == "/api/signals":
             self.send_json({"signals": self.state.store.latest_signals(limit=250)})

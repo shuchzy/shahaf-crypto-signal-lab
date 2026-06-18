@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from crypto_scanner.storage import SignalStore
@@ -73,7 +74,7 @@ class StorageTests(unittest.TestCase):
             stats = store.demo_stats()
             self.assertEqual(stats["wins"], 1)
             self.assertAlmostEqual(stats["realized_pnl"], 0.3)
-            self.assertAlmostEqual(stats["return_pct"], 3.0)
+            self.assertAlmostEqual(stats["return_pct"], 0.3)
             self.assertEqual(store.stats()["demo"]["wins"], 1)
 
     def test_open_demo_trade_marks_unrealized_pnl(self):
@@ -168,6 +169,31 @@ class StorageTests(unittest.TestCase):
             position = store.open_demo_positions()[0]
             self.assertGreater(position["stop_loss"], 100)
             self.assertEqual(position["stop_stage"], "BREAKEVEN")
+
+    def test_demo_trade_closes_after_maximum_holding_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SignalStore(Path(directory) / "signals.db")
+            signal = self.signal()
+            signal_id = store.add_signal(signal)
+            self.assertTrue(store.open_demo_trade(signal_id, signal, notional=10))
+            opened = datetime.fromisoformat(signal["created_at"])
+            late_close = int((opened + timedelta(hours=25)).timestamp() * 1000)
+            store.evaluate_demo_trades(
+                "Bybit",
+                "BTCUSDT",
+                [{
+                    "open_time": late_close - 15 * 60 * 1000,
+                    "close_time": late_close,
+                    "high": 101.0,
+                    "low": 99.5,
+                    "close": 100.5,
+                }],
+            )
+            stats = store.demo_stats()
+            self.assertEqual(stats["open_trades"], 0)
+            self.assertEqual(stats["closed_trades"], 1)
+            self.assertEqual(stats["wins"], 1)
+            self.assertAlmostEqual(stats["realized_pnl"], 0.05)
 
     def test_demo_trade_rejects_risk_reward_below_floor(self):
         with tempfile.TemporaryDirectory() as directory:

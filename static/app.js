@@ -104,9 +104,12 @@ function applySnapshot(payload) {
     .filter(([, health]) => health.ok)
     .map(([name]) => name);
   const marketLabel = connectedMarkets.length ? connectedMarkets.join(" + ") : "מקורות השוק";
-  $("#statusText").textContent = status.last_error
+  $("#statusText").textContent = status.data_stale && !status.scanning
+    ? `STALE · data is ${Math.floor((status.data_age_seconds || 0) / 60)} minutes old`
+    : status.last_error
     ? `שגיאת מקור נתונים: ${status.last_error}`
     : status.scanning ? `LIVE · סורק ${marketLabel}...` : `LIVE · ${marketLabel}`;
+  $("#statusDot").className = `status-dot ${status.data_stale ? "error" : "live"}`;
   $("#scanButton").disabled = status.scanning;
   renderSignals();
 }
